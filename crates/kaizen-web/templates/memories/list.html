@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block title %}Memories — Kaizen{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs"><span class="current">Memories</span></nav>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Memories <span style="font-size:0.7em;color:var(--text-dim);font-weight:400">({{ total_count }})</span></h1>
+  <a href="/memories/new" class="btn btn-primary">+ New Memory</a>
+</div>
+
+<div class="embedding-status" style="padding:0.5em 0.75em;margin-bottom:1em;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:0.85em;color:var(--text-muted);display:flex;align-items:center;gap:0.5em;flex-wrap:wrap">
+  <span style="opacity:0.7">Embedding:</span>
+  <span style="font-weight:600;color:var(--text)">{{ embedding_provider }}</span>
+  <span>/</span>
+  <span>{{ embedding_model }}</span>
+  <span style="opacity:0.5">({{ embedding_dimensions }}d)</span>
+  {% match migration_warning %}
+    {% when Some with (warning) %}
+    <span style="color:var(--danger, #e55);margin-left:auto" title="{{ warning }}">&#9888; Provider changed — run `kaizen reembed`</span>
+    {% when None %}
+  {% endmatch %}
+</div>
+
+<div class="filters">
+  <a href="/" {% if filter_kind == "" %}class="active"{% endif %}>All</a>
+  <a href="/?kind=observation" {% if filter_kind == "observation" %}class="active"{% endif %}>Observation</a>
+  <a href="/?kind=decision" {% if filter_kind == "decision" %}class="active"{% endif %}>Decision</a>
+  <a href="/?kind=pattern" {% if filter_kind == "pattern" %}class="active"{% endif %}>Pattern</a>
+  <a href="/?kind=error" {% if filter_kind == "error" %}class="active"{% endif %}>Error</a>
+  <a href="/?kind=fix" {% if filter_kind == "fix" %}class="active"{% endif %}>Fix</a>
+  <a href="/?kind=fact" {% if filter_kind == "fact" %}class="active"{% endif %}>Fact</a>
+  <a href="/?kind=lesson" {% if filter_kind == "lesson" %}class="active"{% endif %}>Lesson</a>
+  <a href="/?kind=todo" {% if filter_kind == "todo" %}class="active"{% endif %}>Todo</a>
+  <span style="margin-left:auto">
+    <form method="get" action="/" style="display:inline-flex;align-items:center;gap:0.35rem">
+      {% if filter_kind != "" %}<input type="hidden" name="kind" value="{{ filter_kind }}">{% endif %}
+      <input type="text" name="project" value="{{ filter_project }}" placeholder="Filter by project..." style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:0.25rem 0.5rem;border-radius:4px;font-size:0.8rem;width:140px">
+      <button type="submit" class="btn btn-outline" style="font-size:0.75rem;padding:0.2rem 0.5rem">Filter</button>
+      {% if filter_project != "" %}<a href="/?{% if filter_kind != "" %}kind={{ filter_kind }}{% endif %}" style="font-size:0.75rem;color:var(--text-dim)">clear</a>{% endif %}
+    </form>
+  </span>
+</div>
+
+{% if memories.is_empty() %}
+<div class="empty">
+  <p>No memories yet</p>
+  <p style="font-size:0.85rem;max-width:480px;margin:0 auto 1rem">Kaizen captures knowledge from your development sessions — decisions, patterns, fixes, and lessons learned. Create your first memory to get started.</p>
+  <a href="/memories/new" class="btn btn-primary">Create your first memory</a>
+</div>
+{% else %}
+  {% for item in memories %}
+  <div class="card" style="display:flex;align-items:flex-start;gap:0.75rem">
+    <input type="checkbox" class="bulk-select" data-id="{{ item.entry.id }}" style="margin-top:0.35rem;accent-color:var(--accent);cursor:pointer" onclick="event.stopPropagation()">
+    <a href="/memories/{{ item.entry.id }}" style="text-decoration:none;color:inherit;flex:1">
+      <h3>{{ item.entry.title }}</h3>
+      <div class="meta">
+        <span class="badge badge-kind">{{ item.entry.kind }}</span>
+        {% if item.is_stale %}
+          <span class="badge badge-stale">stale ({{ item.days_inactive }}d)</span>
+        {% endif %}
+        <span>
+          <span class="importance-bar"><span class="fill" style="width:{{ item.entry.importance * 100.0 }}%"></span></span>
+          {{ "{:.0}"|format(item.entry.importance * 100.0) }}%
+        </span>
+        <span>{{ item.entry.created_at.format("%Y-%m-%d %H:%M") }}</span>
+        {% if item.entry.related_count > 0 %}
+          <span>{{ item.entry.related_count }} relation{% if item.entry.related_count != 1 %}s{% endif %}</span>
+        {% endif %}
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+{% endif %}
+
+{% if total_pages > 1 %}
+<div style="display:flex;justify-content:center;align-items:center;gap:0.75rem;margin-top:1.5rem;font-size:0.85rem">
+  {% if page > 1 %}
+    <a href="/?page={{ page - 1 }}{% if filter_kind != "" %}&kind={{ filter_kind }}{% endif %}" class="btn btn-outline" style="font-size:0.8rem;padding:0.35rem 0.75rem">&larr; Prev</a>
+  {% endif %}
+  <span style="color:var(--text-dim)">Page {{ page }} of {{ total_pages }}</span>
+  {% if page < total_pages %}
+    <a href="/?page={{ page + 1 }}{% if filter_kind != "" %}&kind={{ filter_kind }}{% endif %}" class="btn btn-outline" style="font-size:0.8rem;padding:0.35rem 0.75rem">Next &rarr;</a>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Floating bulk action bar -->
+<div id="bulk-bar" style="display:none;position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:0.75rem 1.25rem;display:none;align-items:center;gap:1rem;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200">
+  <span id="bulk-count" style="font-size:0.85rem;color:var(--text-dim)">0 selected</span>
+  <button class="btn btn-outline" onclick="bulkArchive()" style="font-size:0.8rem">Archive Selected</button>
+  <button class="btn btn-danger" onclick="bulkDelete()" style="font-size:0.8rem">Delete Selected</button>
+  <button class="btn btn-outline" onclick="clearSelection()" style="font-size:0.8rem;padding:0.4rem 0.6rem">&#10005;</button>
+</div>
+
+<script>
+(function() {
+  const bar = document.getElementById('bulk-bar');
+  const countEl = document.getElementById('bulk-count');
+
+  function getSelected() {
+    return [...document.querySelectorAll('.bulk-select:checked')].map(c => c.dataset.id);
+  }
+
+  function updateBar() {
+    const ids = getSelected();
+    if (ids.length > 0) {
+      bar.style.display = 'flex';
+      countEl.textContent = ids.length + ' selected';
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  document.querySelectorAll('.bulk-select').forEach(cb => {
+    cb.addEventListener('change', updateBar);
+  });
+
+  window.clearSelection = function() {
+    document.querySelectorAll('.bulk-select:checked').forEach(c => c.checked = false);
+    updateBar();
+  };
+
+  window.bulkArchive = async function() {
+    const ids = getSelected();
+    if (ids.length === 0) return;
+    const ok = await window.showConfirm('Archive Memories', 'Archive ' + ids.length + ' selected memories?');
+    if (!ok) return;
+    try {
+      const resp = await fetch('/api/v1/memories/bulk/archive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await resp.json();
+      window.showToast('Archived: ' + data.processed + ', Errors: ' + data.errors, data.errors > 0 ? 'warning' : 'success');
+      setTimeout(() => location.reload(), 1000);
+    } catch (e) {
+      window.showToast('Error: ' + e.message, 'error');
+    }
+  };
+
+  window.bulkDelete = async function() {
+    const ids = getSelected();
+    if (ids.length === 0) return;
+    const ok = await window.showConfirm('Delete Memories', 'Permanently delete ' + ids.length + ' memories? This cannot be undone.');
+    if (!ok) return;
+    try {
+      const resp = await fetch('/api/v1/memories/bulk/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await resp.json();
+      window.showToast('Deleted: ' + data.processed + ', Errors: ' + data.errors, data.errors > 0 ? 'warning' : 'success');
+      setTimeout(() => location.reload(), 1000);
+    } catch (e) {
+      window.showToast('Error: ' + e.message, 'error');
+    }
+  };
+})();
+</script>
+{% endblock %}

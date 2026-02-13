@@ -1,0 +1,30 @@
+[helix]
+url = "http://localhost"
+port = 6969
+auto_start = true
+
+[embedding]
+provider = "hash"          # "hash", "local" (needs embed-local feature), or "openai"
+model = "hash-128d"
+
+[mcp]
+transport = "stdio"
+
+[web]
+port = 37737
+host = "127.0.0.1"
+
+[capture]
+enabled = true
+min_importance = 0.3
+
+[retrieval]
+default_limit = 10
+token_budget = 2000
+
+[sharing]
+mode = "local"             # "local" or "team"
+
+[privacy]
+default_level = "private"  # "public", "team", or "private"
+redaction_patterns = []

@@ -1,0 +1,8 @@
+[project]
+name = "kaizen"
+queries = "./"
+container_runtime = "docker"
+
+[local.dev]
+port = 6969
+build_mode = "dev"

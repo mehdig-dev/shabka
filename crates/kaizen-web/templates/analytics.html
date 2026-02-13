@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics — Kaizen{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs"><span class="current">Analytics</span></nav>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Analytics</h1>
+</div>
+
+<!-- Summary cards -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.75rem;margin-bottom:1.5rem">
+  <div class="card" style="text-align:center">
+    <div style="font-size:2rem;font-weight:700;color:var(--accent)">{{ total_memories }}</div>
+    <div style="color:var(--text-dim);font-size:0.85rem">Total Memories</div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div style="font-size:2rem;font-weight:700;color:var(--success)">{{ active_count }}</div>
+    <div style="color:var(--text-dim);font-size:0.85rem">Active</div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div style="font-size:2rem;font-weight:700;color:var(--warning)">{{ archived_count }}</div>
+    <div style="color:var(--text-dim);font-size:0.85rem">Archived</div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div style="font-size:2rem;font-weight:700;color:var(--text-dim)">{{ superseded_count }}</div>
+    <div style="color:var(--text-dim);font-size:0.85rem">Superseded</div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div style="font-size:2rem;font-weight:700;color:var(--info)">{{ total_relations }}</div>
+    <div style="color:var(--text-dim);font-size:0.85rem">Relations</div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div style="font-size:2rem;font-weight:700;color:{% if stale_count > 0 %}var(--warning){% else %}var(--success){% endif %}">{{ stale_count }}</div>
+    <div style="color:var(--text-dim);font-size:0.85rem">Stale</div>
+  </div>
+</div>
+
+<!-- Embedding info -->
+<div class="card" style="margin-bottom:1.5rem;font-size:0.85rem">
+  <strong>Embedding Provider:</strong> {{ embedding_provider }} / {{ embedding_model }} ({{ embedding_dimensions }}d)
+  {% match migration_warning %}
+    {% when Some with (warning) %}
+    <span style="color:var(--danger);margin-left:1rem">&#9888; {{ warning }}</span>
+    {% when None %}
+  {% endmatch %}
+</div>
+
+<!-- Memory Quality -->
+<div style="display:grid;grid-template-columns:1fr 2fr;gap:1rem;margin-bottom:1.5rem">
+  <div class="card" style="text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center">
+    <div style="position:relative;width:120px;height:120px;margin-bottom:0.5rem">
+      <svg viewBox="0 0 36 36" style="width:100%;height:100%;transform:rotate(-90deg)">
+        <path d="M18 2.0845a 15.9155 15.9155 0 0 1 0 31.831a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--surface2)" stroke-width="3"/>
+        <path d="M18 2.0845a 15.9155 15.9155 0 0 1 0 31.831a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="{% if quality_score >= 80 %}var(--success){% else if quality_score >= 50 %}var(--warning){% else %}var(--danger){% endif %}" stroke-width="3" stroke-dasharray="{{ quality_score }}, 100" stroke-linecap="round"/>
+      </svg>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:{% if quality_score >= 80 %}var(--success){% else if quality_score >= 50 %}var(--warning){% else %}var(--danger){% endif %}">{{ quality_score }}</div>
+    </div>
+    <div style="font-size:0.85rem;color:var(--text-dim)">Quality Score</div>
+    {% if contradiction_count > 0 %}
+    <div style="font-size:0.75rem;color:var(--warning);margin-top:0.35rem">{{ contradiction_count }} contradiction{% if contradiction_count != 1 %}s{% endif %}</div>
+    {% endif %}
+  </div>
+  <div class="card">
+    <h3 style="margin-bottom:0.75rem;font-size:0.95rem">Quality Issues</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1.5rem;font-size:0.82rem">
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Generic titles</span> <span>{{ quality_counts.generic_titles }}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Short content</span> <span>{{ quality_counts.short_content }}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">No tags</span> <span>{{ quality_counts.no_tags }}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Low importance</span> <span>{{ quality_counts.low_importance }}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Stale</span> <span>{{ quality_counts.stale }}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Orphaned</span> <span>{{ quality_counts.orphaned }}</span></div>
+    </div>
+    {% if !quality_top_issues.is_empty() %}
+    <div style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.5rem">
+      <div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.35rem">Top issues:</div>
+      {% for issue in quality_top_issues %}
+      <div style="font-size:0.78rem;padding:0.2rem 0;display:flex;gap:0.5rem">
+        <code style="color:var(--accent);font-size:0.72rem">{{ issue.short_id }}</code>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ issue.title }}</span>
+        <span style="color:var(--warning);font-size:0.72rem;white-space:nowrap">{{ issue.labels }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Charts -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem">
+  <div class="card">
+    <h3 style="margin-bottom:0.75rem;font-size:0.95rem">Memories by Kind</h3>
+    <canvas id="kindChart" style="max-height:300px"></canvas>
+  </div>
+  <div class="card">
+    <h3 style="margin-bottom:0.75rem;font-size:0.95rem">Creation Trend (12 months)</h3>
+    <canvas id="trendChart" style="max-height:300px"></canvas>
+  </div>
+</div>
+
+<!-- Most recently accessed -->
+<div class="card">
+  <h3 style="margin-bottom:0.75rem;font-size:0.95rem">Recently Accessed</h3>
+  {% if most_accessed.is_empty() %}
+    <div class="empty" style="padding:1rem"><p>No memories accessed recently. Memories appear here as you search and view them.</p></div>
+  {% else %}
+  <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+    <thead>
+      <tr style="border-bottom:1px solid var(--border);color:var(--text-dim)">
+        <th style="text-align:left;padding:0.4rem">Title</th>
+        <th style="text-align:left;padding:0.4rem">Kind</th>
+        <th style="text-align:right;padding:0.4rem">Importance</th>
+        <th style="text-align:right;padding:0.4rem">Days Inactive</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in most_accessed %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:0.4rem"><a href="/memories/{{ entry.id }}">{{ entry.title }}</a></td>
+        <td style="padding:0.4rem"><span class="badge badge-kind">{{ entry.kind }}</span></td>
+        <td style="padding:0.4rem;text-align:right">{{ "{:.0}"|format(entry.importance * 100.0) }}%</td>
+        <td style="padding:0.4rem;text-align:right">{{ entry.days_inactive }}d</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  const KIND_COLORS = ['#6c63ff','#e74c3c','#2ecc71','#f39c12','#3498db','#9b59b6','#1abc9c','#e67e22','#95a5a6'];
+
+  // Doughnut chart — memories by kind
+  new Chart(document.getElementById('kindChart'), {
+    type: 'doughnut',
+    data: {
+      labels: {{ kind_labels_json }},
+      datasets: [{
+        data: {{ kind_counts_json }},
+        backgroundColor: KIND_COLORS,
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'right', labels: { color: '#e0e0e0', font: { size: 11 } } }
+      }
+    }
+  });
+
+  // Line chart — creation trend
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: {{ trend_labels_json }},
+      datasets: [{
+        label: 'Created',
+        data: {{ trend_counts_json }},
+        borderColor: '#6c63ff',
+        backgroundColor: 'rgba(108,99,255,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { color: '#2a2a4a' } },
+        y: { beginAtZero: true, ticks: { color: '#888', stepSize: 1 }, grid: { color: '#2a2a4a' } }
+      },
+      plugins: {
+        legend: { display: false }
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,11 @@
+/target
+.kaizen/
+*.local.toml
+.env
+.DS_Store
+helix/.helix/
+.claude/settings.local.json
+.claude/skills/
+tests/e2e/node_modules/
+tests/e2e/test-results/
+tests/e2e/playwright-report/

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Timeline — Kaizen{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs"><span class="current">Timeline</span></nav>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Timeline</h1>
+</div>
+
+{% if entries.is_empty() %}
+<div class="empty">
+  <p>No entries in timeline</p>
+</div>
+{% else %}
+  {% for entry in entries %}
+  <div class="timeline-item">
+    <div class="time">{{ entry.created_at.format("%Y-%m-%d %H:%M") }}</div>
+    <a href="/memories/{{ entry.id }}" style="text-decoration:none;color:inherit">
+      <div class="card" style="margin-top:0.25rem">
+        <h3>{{ entry.title }}</h3>
+        <div class="meta">
+          <span class="badge badge-kind">{{ entry.kind }}</span>
+          <span>
+            <span class="importance-bar"><span class="fill" style="width:{{ entry.importance * 100.0 }}%"></span></span>
+            {{ "{:.0}"|format(entry.importance * 100.0) }}%
+          </span>
+          {% if entry.related_count > 0 %}
+            <span>{{ entry.related_count }} relation{% if entry.related_count != 1 %}s{% endif %}</span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+{% endif %}
+{% endblock %}

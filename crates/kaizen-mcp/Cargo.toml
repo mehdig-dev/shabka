@@ -1,0 +1,26 @@
+[package]
+name = "kaizen-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kaizen-mcp"
+path = "src/main.rs"
+
+[dependencies]
+kaizen-core = { workspace = true, default-features = false }
+tokio = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[features]
+default = ["embed-local"]
+embed-local = ["kaizen-core/embed-local"]

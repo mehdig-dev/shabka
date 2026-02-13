@@ -1,0 +1,5 @@
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+# Set OPENAI_API_KEY env var or uncomment:
+# api_key = "sk-..."

@@ -1,0 +1,24 @@
+[package]
+name = "kaizen-hooks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kaizen-hooks"
+path = "src/main.rs"
+
+[dependencies]
+kaizen-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+dirs = { workspace = true }

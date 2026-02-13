@@ -1,0 +1,75 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kaizen-core",
+    "crates/kaizen-mcp",
+    "crates/kaizen-hooks",
+    "crates/kaizen-web",
+    "crates/kaizen-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mehdig-dev/kaizen"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Internal crates
+kaizen-core = { path = "crates/kaizen-core", default-features = false }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# MCP
+rmcp = { version = "0.14", features = ["server", "transport-io", "macros"] }
+schemars = "1"
+
+# Database
+helix-rs = "0.1"
+reqwest = { version = "0.12", features = ["json"] }
+
+# Embeddings
+fastembed = "4"
+
+# Web
+axum = "0.8"
+askama = "0.12"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# IDs and time
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Configuration
+config = "0.14"
+toml = "0.8"
+dirs = "6"
+
+# Text processing
+regex = "1"
+owo-colors = "4"
+
+# Process/path utilities
+which = "7"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
