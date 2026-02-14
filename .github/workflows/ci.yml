@@ -29,11 +29,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --no-default-features -- -D warnings
 
-      - name: Unit tests (kaizen-core)
-        run: cargo test -p kaizen-core --no-default-features
+      - name: Unit tests (shabka-core)
+        run: cargo test -p shabka-core --no-default-features
 
-      - name: Unit tests (kaizen-hooks)
-        run: cargo test -p kaizen-hooks --no-default-features
+      - name: Unit tests (shabka-hooks)
+        run: cargo test -p shabka-hooks --no-default-features
 
       - name: Build all crates
         run: cargo build --workspace --no-default-features

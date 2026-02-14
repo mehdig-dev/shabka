@@ -1,5 +1,5 @@
 [project]
-name = "kaizen"
+name = "shabka"
 queries = "./"
 container_runtime = "docker"
 

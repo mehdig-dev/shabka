@@ -1,0 +1,31 @@
+[package]
+name = "shabka-mcp"
+description = "MCP server for Shabka — 12 tools for LLM memory management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "shabka-mcp"
+path = "src/main.rs"
+
+[dependencies]
+shabka-core = { workspace = true, default-features = false }
+tokio = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[features]
+default = ["embed-local"]
+embed-local = ["shabka-core/embed-local"]

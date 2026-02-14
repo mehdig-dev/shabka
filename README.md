@@ -1,27 +1,27 @@
-# Kaizen
+# Shabka
 
 A shared LLM memory system. Save, search, and connect knowledge across AI coding sessions.
 
-Kaizen gives LLMs persistent memory through an MCP server backed by [HelixDB](https://github.com/HelixDB/helix-db) (a graph-vector database). Memories are stored as nodes with vector embeddings for semantic search, connected by typed edges for relationship-aware retrieval.
+Shabka gives LLMs persistent memory through an MCP server backed by [HelixDB](https://github.com/HelixDB/helix-db) (a graph-vector database). Memories are stored as nodes with vector embeddings for semantic search, connected by typed edges for relationship-aware retrieval.
 
 ## Architecture
 
 ```
 ┌─────────────┐     stdio      ┌─────────────┐     HTTP      ┌─────────────┐
-│  Claude Code │◄──────────────►│  kaizen-mcp │◄─────────────►│   HelixDB   │
+│  Claude Code │◄──────────────►│  shabka-mcp │◄─────────────►│   HelixDB   │
 │  (or any MCP │                │  (MCP server)│               │  port 6969  │
 │   client)    │                └─────────────┘               └─────────────┘
 └─────────────┘                       │
       │                               │ uses
       │ hooks                   ┌─────────────┐
-      ▼                         │ kaizen-core │        ┌─────────────┐
-┌─────────────┐                 │  - model    │        │  kaizen-web │
-│ kaizen-hooks│─────────────────│  - storage  │◄───────│  port 37737 │
+      ▼                         │ shabka-core │        ┌─────────────┐
+┌─────────────┐                 │  - model    │        │  shabka-web │
+│ shabka-hooks│─────────────────│  - storage  │◄───────│  port 37737 │
 │ (auto-capture)                │  - embedding│        │  (dashboard)│
 └─────────────┘                 │  - ranking  │        └─────────────┘
                                 │  - sharing  │
                                 │  - graph    │        ┌─────────────┐
-                                │  - history  │◄───────│  kaizen-cli │
+                                │  - history  │◄───────│  shabka-cli │
                                 │  - dedup    │        │  (CLI tool) │
                                 │  - scrub    │        └─────────────┘
                                 │  - llm      │
@@ -36,15 +36,15 @@ Kaizen gives LLMs persistent memory through an MCP server backed by [HelixDB](ht
 
 | Crate | Purpose |
 |-------|---------|
-| `kaizen-core` | Data model, storage, embeddings, ranking, sharing, graph intelligence, history audit trail, smart dedup, PII scrubbing, LLM service, auto-tagging, quality assessment, memory consolidation, retry logic |
-| `kaizen-mcp` | MCP server (12 tools for LLM integration) |
-| `kaizen-hooks` | Auto-capture + auto-relate from Claude Code sessions |
-| `kaizen-web` | Web dashboard (CRUD, search, graph visualization, REST API, analytics) |
-| `kaizen-cli` | CLI tool (search, get, chain, prune, history, status, export, import, init, reembed, consolidate) |
+| `shabka-core` | Data model, storage, embeddings, ranking, sharing, graph intelligence, history audit trail, smart dedup, PII scrubbing, LLM service, auto-tagging, quality assessment, memory consolidation, retry logic |
+| `shabka-mcp` | MCP server (12 tools for LLM integration) |
+| `shabka-hooks` | Auto-capture + auto-relate from Claude Code sessions |
+| `shabka-web` | Web dashboard (CRUD, search, graph visualization, REST API, analytics) |
+| `shabka-cli` | CLI tool (search, get, chain, prune, history, status, export, import, init, reembed, consolidate) |
 
 ## MCP Tools
 
-Kaizen exposes 12 tools via the MCP protocol:
+Shabka exposes 12 tools via the MCP protocol:
 
 | Tool | Description |
 |------|-------------|
@@ -63,7 +63,7 @@ Kaizen exposes 12 tools via the MCP protocol:
 
 **Retrieval pattern:** Start with `search` (compact index, ~50-100 tokens each), drill into `get_memories` for full content, use `timeline` for chronological context.
 
-**Smart dedup:** When saving, Kaizen checks for near-duplicates via embedding similarity. Exact matches (>=0.95) are skipped, near-matches (>=0.85) supersede the old memory, and new content is auto-related to similar existing memories.
+**Smart dedup:** When saving, Shabka checks for near-duplicates via embedding similarity. Exact matches (>=0.95) are skipped, near-matches (>=0.85) supersede the old memory, and new content is auto-related to similar existing memories.
 
 ## Quick Start
 
@@ -98,12 +98,12 @@ This compiles the HQL queries, builds a Docker image, and starts HelixDB on port
 ### 3. Register the MCP Server
 
 ```bash
-claude mcp add kaizen -- cargo run --manifest-path /path/to/kaizen/Cargo.toml -p kaizen-mcp --no-default-features
+claude mcp add shabka -- cargo run --manifest-path /path/to/shabka/Cargo.toml -p shabka-mcp --no-default-features
 ```
 
 ### 4. Use It
 
-Open a new Claude Code session. The 12 Kaizen tools will be available. Try:
+Open a new Claude Code session. The 12 Shabka tools will be available. Try:
 
 - "Save a memory about how our auth system works"
 - "Search for authentication"
@@ -111,52 +111,52 @@ Open a new Claude Code session. The 12 Kaizen tools will be available. Try:
 
 ## CLI
 
-Install the CLI with `just cli-install` (or `cargo install --path crates/kaizen-cli --no-default-features`).
+Install the CLI with `just cli-install` (or `cargo install --path crates/shabka-cli --no-default-features`).
 
 ```bash
-kaizen search <query>         # Semantic + keyword hybrid search
+shabka search <query>         # Semantic + keyword hybrid search
     --kind <kind>             # Filter by kind (observation, decision, pattern, etc.)
     --limit <n>               # Max results (default 10)
     --tag <tag>               # Filter by tag
     --json                    # JSON output
 
-kaizen get <memory-id>        # View full memory details
-                              # Supports short 8-char prefix (e.g. kaizen get a1b2c3d4)
+shabka get <memory-id>        # View full memory details
+                              # Supports short 8-char prefix (e.g. shabka get a1b2c3d4)
     --json                    # JSON output
 
-kaizen chain <memory-id>      # Follow relation chains from a memory
+shabka chain <memory-id>      # Follow relation chains from a memory
     --relation <type>         # Filter by relation type (can repeat)
     --depth <n>               # Max traversal depth (default from config)
     --json                    # JSON output
 
-kaizen prune                  # Archive stale memories
+shabka prune                  # Archive stale memories
     --days <n>                # Inactivity threshold (default from config)
     --dry-run                 # Preview without changes
     --decay-importance        # Also reduce importance of stale memories
 
-kaizen history                # Show recent audit events (with field change details)
+shabka history                # Show recent audit events (with field change details)
     <memory-id>               # Show history for a specific memory
     --limit <n>               # Max events (default 20)
     --json                    # JSON output
 
-kaizen status                 # HelixDB health, memory count, embedding info
-kaizen init                   # Create .kaizen/config.toml scaffold
+shabka status                 # HelixDB health, memory count, embedding info
+shabka init                   # Create .shabka/config.toml scaffold
     --provider <name>         # Pre-configure embedding provider (hash, ollama, openai, gemini)
     --check                   # Check prerequisites (Ollama, API keys, HelixDB) without creating files
 
-kaizen export -o file.json    # Export all memories + relations
+shabka export -o file.json    # Export all memories + relations
     --privacy <level>         # Filter by privacy threshold (default: private)
     --scrub                   # Redact PII (emails, API keys, IPs, file paths)
     --scrub-report            # Scan for PII without exporting
 
-kaizen import file.json       # Re-embed and import memories
+shabka import file.json       # Re-embed and import memories
 
-kaizen reembed                # Re-embed memories with current provider
+shabka reembed                # Re-embed memories with current provider
     --batch-size <n>          # Batch size (default 10)
     --dry-run                 # Preview without changes
     --force                   # Force full re-embed, skip incremental logic
 
-kaizen consolidate            # Merge clusters of similar memories (requires LLM)
+shabka consolidate            # Merge clusters of similar memories (requires LLM)
     --dry-run                 # Preview clusters without merging
     --min-cluster <n>         # Min cluster size (default from config)
     --min-age <n>             # Min memory age in days (default from config)
@@ -202,7 +202,7 @@ Features:
 
 ## Auto-Capture Hooks
 
-Kaizen can automatically capture memories from Claude Code sessions via hooks. Install and register:
+Shabka can automatically capture memories from Claude Code sessions via hooks. Install and register:
 
 ```bash
 just hooks-install    # Build and copy to ~/.local/bin
@@ -213,7 +213,7 @@ The hooks capture tool use events (file edits, command runs, errors) and auto-re
 
 ## Configuration
 
-Kaizen uses layered TOML configuration: global (`~/.config/kaizen/config.toml`), project (`.kaizen/config.toml`), and local (`.kaizen/config.local.toml`, gitignored).
+Shabka uses layered TOML configuration: global (`~/.config/shabka/config.toml`), project (`.shabka/config.toml`), and local (`.shabka/config.local.toml`, gitignored).
 
 ```toml
 [embedding]
@@ -317,7 +317,7 @@ cd helix && helix push dev
 ## Project Structure
 
 ```
-kaizen/
+shabka/
 ├── Cargo.toml              # Workspace root
 ├── Justfile                # Dev task automation
 ├── helix/
@@ -325,7 +325,7 @@ kaizen/
 │   ├── schema.hx           # Node/Edge/Vector definitions (HQL v2)
 │   └── queries.hx          # Pre-compiled queries (HQL v2)
 └── crates/
-    ├── kaizen-core/        # Core library
+    ├── shabka-core/        # Core library
     │   ├── src/
     │   │   ├── model/      # Memory, Session, Relation types
     │   │   ├── storage/    # HelixDB backend (StorageBackend trait)
@@ -344,16 +344,16 @@ kaizen/
     │   │   ├── consolidate.rs # Memory cluster consolidation
     │   │   └── retry.rs    # Exponential backoff retry logic
     │   └── tests/          # Integration tests (HelixDB + Ollama)
-    ├── kaizen-mcp/         # MCP server binary (rmcp 0.14)
-    ├── kaizen-hooks/       # Auto-capture + auto-relate
-    ├── kaizen-web/         # Web dashboard (Axum + Askama)
+    ├── shabka-mcp/         # MCP server binary (rmcp 0.14)
+    ├── shabka-hooks/       # Auto-capture + auto-relate
+    ├── shabka-web/         # Web dashboard (Axum + Askama)
     │   └── src/routes/
     │       ├── memories.rs # CRUD + list with pagination
     │       ├── search.rs   # Semantic search page
     │       ├── graph.rs    # Graph visualization + chain API
     │       ├── analytics.rs# Analytics dashboard
     │       └── api.rs      # REST API (/api/v1/)
-    └── kaizen-cli/         # CLI tool (clap)
+    └── shabka-cli/         # CLI tool (clap)
 ```
 
 ## License

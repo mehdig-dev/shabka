@@ -1,5 +1,5 @@
 /target
-.kaizen/
+.shabka/
 *.local.toml
 .env
 .DS_Store

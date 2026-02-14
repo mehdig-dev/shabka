@@ -1,4 +1,4 @@
-import { test, expect, skipIfUnavailable } from '../fixtures/kaizen-fixtures';
+import { test, expect, skipIfUnavailable } from '../fixtures/shabka-fixtures';
 
 test.beforeEach(async () => {
   await skipIfUnavailable();
@@ -26,12 +26,12 @@ test.describe('Theme toggle', () => {
     // Set to light mode
     await page.evaluate(() => {
       document.documentElement.classList.remove('light');
-      localStorage.removeItem('kaizen-theme');
+      localStorage.removeItem('shabka-theme');
     });
 
     await page.click('#theme-toggle');
 
-    const stored = await page.evaluate(() => localStorage.getItem('kaizen-theme'));
+    const stored = await page.evaluate(() => localStorage.getItem('shabka-theme'));
     expect(stored).toBe('light');
   });
 
@@ -41,7 +41,7 @@ test.describe('Theme toggle', () => {
     // Ensure we're in dark mode, then switch to light
     await page.evaluate(() => {
       document.documentElement.classList.remove('light');
-      localStorage.setItem('kaizen-theme', 'dark');
+      localStorage.setItem('shabka-theme', 'dark');
     });
     await page.click('#theme-toggle');
 
@@ -54,7 +54,7 @@ test.describe('Theme toggle', () => {
 
     // Clean up: reset to dark
     await page.evaluate(() => {
-      localStorage.removeItem('kaizen-theme');
+      localStorage.removeItem('shabka-theme');
     });
   });
 });

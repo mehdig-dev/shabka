@@ -1,0 +1,29 @@
+[package]
+name = "shabka-hooks"
+description = "Claude Code hooks for Shabka — auto-capture memories from coding sessions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "shabka-hooks"
+path = "src/main.rs"
+
+[dependencies]
+shabka-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+dirs = { workspace = true }

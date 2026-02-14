@@ -3,14 +3,14 @@ import { ApiClient, type CreateResponse } from '../helpers/api-client';
 import { makeMemory, type CreateMemoryInput } from '../helpers/test-data';
 import { skipIfUnavailable } from '../helpers/service-guard';
 
-type KaizenFixtures = {
+type ShabkaFixtures = {
   /** Pre-configured API client with auto-cleanup */
   apiClient: ApiClient;
   /** Create a test memory that is automatically deleted after the test */
   testMemory: CreateResponse;
 };
 
-export const test = base.extend<KaizenFixtures>({
+export const test = base.extend<ShabkaFixtures>({
   apiClient: async ({}, use) => {
     const client = new ApiClient();
     await use(client);

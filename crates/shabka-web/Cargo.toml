@@ -1,0 +1,28 @@
+[package]
+name = "shabka-web"
+description = "Web dashboard for Shabka — browse, search, and manage LLM memories"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "shabka-web"
+path = "src/main.rs"
+
+[dependencies]
+shabka-core = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+askama = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }

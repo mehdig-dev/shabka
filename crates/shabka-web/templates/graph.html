@@ -1,0 +1,627 @@
+{% extends "base.html" %}
+
+{% block title %}Graph — Shabka{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs"><span class="current">Graph</span></nav>
+{% endblock %}
+
+{% block content %}
+<style>
+  /* Layout: filters left, graph center, sidebar right */
+  .graph-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 0;
+    height: calc(100vh - 100px);
+    margin: -1.5rem;
+    margin-top: -0.5rem;
+  }
+  .graph-layout.sidebar-open {
+    grid-template-columns: 220px 1fr 340px;
+  }
+
+  /* Left filter panel */
+  .filter-panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 1rem;
+    overflow-y: auto;
+    font-size: 0.8rem;
+  }
+  .filter-panel h3 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 0.5rem;
+    margin-top: 1rem;
+  }
+  .filter-panel h3:first-child { margin-top: 0; }
+
+  .filter-panel .search-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+    margin-bottom: 0.5rem;
+  }
+  .filter-panel .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .filter-panel label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .filter-panel label:hover { color: var(--accent); }
+  .filter-panel input[type="checkbox"] { accent-color: var(--accent); }
+
+  .kind-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .slider-group {
+    margin-top: 0.25rem;
+  }
+  .slider-group input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .slider-val {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    font-family: monospace;
+  }
+
+  .filter-stats {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    line-height: 1.8;
+  }
+  .filter-stats strong { color: var(--text); }
+
+  /* Center graph area */
+  .graph-area {
+    position: relative;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  #cy { width: 100%; height: 100%; }
+
+  .graph-toolbar {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    gap: 0.4rem;
+    z-index: 10;
+  }
+  .graph-toolbar select,
+  .graph-toolbar button {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.35rem 0.6rem;
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .graph-toolbar button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Hover tooltip */
+  .graph-tooltip {
+    display: none;
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.8rem;
+    font-size: 0.78rem;
+    max-width: 280px;
+    z-index: 20;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  .graph-tooltip h4 {
+    font-size: 0.82rem;
+    margin-bottom: 0.15rem;
+    color: var(--text);
+  }
+  .graph-tooltip .meta { color: var(--text-dim); font-size: 0.72rem; }
+
+  /* Right sidebar */
+  .detail-sidebar {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    padding: 1rem;
+    overflow-y: auto;
+    display: none;
+  }
+  .graph-layout.sidebar-open .detail-sidebar { display: block; }
+
+  .sidebar-close {
+    float: right;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0 0.3rem;
+    line-height: 1;
+  }
+  .sidebar-close:hover { color: var(--text); }
+
+  .sidebar-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    padding-right: 2rem;
+    line-height: 1.4;
+  }
+
+  .sidebar-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-content {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    background: var(--surface2);
+    border-radius: var(--radius);
+    padding: 0.75rem;
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+
+  .sidebar-actions {
+    margin-top: 0.75rem;
+    display: flex;
+    gap: 0.5rem;
+  }
+</style>
+
+<div class="graph-layout" id="graph-layout">
+  <!-- Left: Filters -->
+  <div class="filter-panel">
+    <h3>Search</h3>
+    <input type="text" class="search-input" id="graph-search" placeholder="Filter nodes...">
+
+    <h3>Importance</h3>
+    <div class="slider-group">
+      <input type="range" id="importance-filter" min="0" max="1" step="0.05" value="0">
+      <div style="display:flex;justify-content:space-between">
+        <span class="slider-val">Min: <span id="imp-val">0%</span></span>
+      </div>
+    </div>
+
+    <h3>Kind</h3>
+    <div id="kind-filters"></div>
+
+    <h3>Layout</h3>
+    <select id="layout-select" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:0.35rem;border-radius:var(--radius);font-size:0.8rem">
+      <option value="cose" selected>Force-directed</option>
+      <option value="circle">Circle</option>
+      <option value="grid">Grid</option>
+      <option value="concentric">Concentric</option>
+      <option value="breadthfirst">Tree</option>
+    </select>
+
+    <div class="filter-stats" id="filter-stats"></div>
+  </div>
+
+  <!-- Center: Graph -->
+  <div class="graph-area">
+    <div id="cy"></div>
+    <div id="tooltip" class="graph-tooltip"></div>
+    <div class="graph-toolbar">
+      <button id="fit-btn" title="Fit to view">Fit</button>
+      <button id="relayout-btn" title="Re-run layout">Relayout</button>
+    </div>
+  </div>
+
+  <!-- Right: Sidebar detail -->
+  <div class="detail-sidebar" id="detail-sidebar">
+    <button class="sidebar-close" id="sidebar-close" title="Close">&times;</button>
+    <div id="sidebar-body">
+      <p style="color:var(--text-dim)">Click a node to view details</p>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+<script>
+const KIND_COLORS = {
+  observation: '#6c63ff',
+  error:       '#e74c3c',
+  fix:         '#2ecc71',
+  decision:    '#f39c12',
+  pattern:     '#3498db',
+  lesson:      '#9b59b6',
+  fact:        '#1abc9c',
+  preference:  '#e67e22',
+  todo:        '#95a5a6',
+};
+
+let cy;
+let allData = { nodes: [], edges: [] };
+let activeKinds = new Set(Object.keys(KIND_COLORS));
+let minImportance = 0;
+let searchQuery = '';
+let selectedNodeId = null;
+
+// Build kind filter checkboxes
+function buildKindFilters() {
+  const container = document.getElementById('kind-filters');
+  const kindCounts = {};
+  allData.nodes.forEach(n => { kindCounts[n.kind] = (kindCounts[n.kind] || 0) + 1; });
+
+  container.innerHTML = Object.entries(KIND_COLORS).map(([kind, color]) => {
+    const count = kindCounts[kind] || 0;
+    if (count === 0) return '';
+    return `<label>
+      <input type="checkbox" value="${kind}" checked>
+      <span class="kind-dot" style="background:${color}"></span>
+      ${kind} <span style="color:var(--text-dim)">(${count})</span>
+    </label>`;
+  }).join('');
+
+  container.querySelectorAll('input').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) activeKinds.add(cb.value);
+      else activeKinds.delete(cb.value);
+      applyFilters();
+    });
+  });
+}
+
+function applyFilters() {
+  if (!cy) return;
+
+  let visibleCount = 0;
+  cy.nodes().forEach(node => {
+    const kind = node.data('kind');
+    const importance = node.data('importance');
+    const title = node.data('fullTitle').toLowerCase();
+
+    const kindMatch = activeKinds.has(kind);
+    const impMatch = importance >= minImportance;
+    const searchMatch = !searchQuery || title.includes(searchQuery);
+
+    if (kindMatch && impMatch && searchMatch) {
+      node.style('display', 'element');
+      visibleCount++;
+      // Highlight search matches
+      if (searchQuery && searchMatch) {
+        node.addClass('search-hit');
+      } else {
+        node.removeClass('search-hit');
+      }
+    } else {
+      node.style('display', 'none');
+      node.removeClass('search-hit');
+    }
+  });
+
+  // Hide edges where either end is hidden
+  cy.edges().forEach(edge => {
+    const srcVisible = edge.source().style('display') !== 'none';
+    const tgtVisible = edge.target().style('display') !== 'none';
+    edge.style('display', srcVisible && tgtVisible ? 'element' : 'none');
+  });
+
+  updateStats(visibleCount);
+}
+
+function updateStats(visible) {
+  const total = allData.nodes.length;
+  const edges = cy ? cy.edges().filter(e => e.style('display') !== 'none').length : 0;
+  document.getElementById('filter-stats').innerHTML =
+    `<strong>${visible}</strong> / ${total} nodes<br>` +
+    `<strong>${edges}</strong> edges visible`;
+}
+
+async function loadSidebar(nodeId) {
+  selectedNodeId = nodeId;
+  const layout = document.getElementById('graph-layout');
+  layout.classList.add('sidebar-open');
+
+  const body = document.getElementById('sidebar-body');
+  body.innerHTML = '<p style="color:var(--text-dim)">Loading...</p>';
+
+  try {
+    const resp = await fetch(`/api/memories/${nodeId}`);
+    const m = await resp.json();
+    const color = KIND_COLORS[m.kind] || '#6c63ff';
+
+    body.innerHTML = `
+      <h2 class="sidebar-title">${escHtml(m.title)}</h2>
+      <div class="sidebar-meta">
+        <span class="badge badge-kind" style="background:${color}20;color:${color};border:1px solid ${color}">${m.kind}</span>
+        <span>importance: ${Math.round(m.importance * 100)}%</span>
+        <span>${m.status}</span>
+        <span>${m.created_at}</span>
+        ${m.tags.length ? '<br>' + m.tags.map(t => `<span class="tag">${escHtml(t)}</span>`).join(' ') : ''}
+      </div>
+      <div class="sidebar-content">${escHtml(m.content)}</div>
+      <div class="sidebar-actions">
+        <a href="/memories/${m.id}" class="btn btn-outline" style="font-size:0.8rem;padding:0.35rem 0.75rem">Full page</a>
+        <a href="/memories/${m.id}/edit" class="btn btn-outline" style="font-size:0.8rem;padding:0.35rem 0.75rem">Edit</a>
+      </div>`;
+  } catch (e) {
+    body.innerHTML = `<p style="color:var(--danger)">Failed to load: ${e.message}</p>`;
+  }
+}
+
+function closeSidebar() {
+  document.getElementById('graph-layout').classList.remove('sidebar-open');
+  selectedNodeId = null;
+  if (cy) {
+    cy.elements().removeClass('selected selected-neighbor');
+    cy.resize();
+  }
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function init() {
+  const resp = await fetch('/graph/data');
+  allData = await resp.json();
+
+  const elements = [];
+
+  allData.nodes.forEach(n => {
+    elements.push({
+      data: {
+        id: n.id,
+        label: n.title.length > 35 ? n.title.slice(0, 32) + '...' : n.title,
+        fullTitle: n.title,
+        kind: n.kind,
+        importance: n.importance,
+        createdAt: n.created_at,
+        color: KIND_COLORS[n.kind] || '#6c63ff',
+        size: 18 + n.importance * 28,
+      }
+    });
+  });
+
+  allData.edges.forEach(e => {
+    elements.push({
+      data: {
+        source: e.source,
+        target: e.target,
+        relationType: e.relation_type,
+        strength: e.strength,
+      }
+    });
+  });
+
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: elements,
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'background-color': 'data(color)',
+          'label': 'data(label)',
+          'color': '#c0c0c0',
+          'font-size': '9px',
+          'text-valign': 'bottom',
+          'text-margin-y': 5,
+          'width': 'data(size)',
+          'height': 'data(size)',
+          'border-width': 2,
+          'border-color': 'data(color)',
+          'border-opacity': 0.3,
+          'text-max-width': '110px',
+          'text-wrap': 'ellipsis',
+          'text-outline-color': '#0f0f1a',
+          'text-outline-width': 2,
+        }
+      },
+      {
+        selector: 'edge',
+        style: {
+          'width': 1.5,
+          'line-color': '#2a2a4a',
+          'target-arrow-color': '#2a2a4a',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'arrow-scale': 0.7,
+          'opacity': 0.5,
+        }
+      },
+      /* Hover highlight */
+      {
+        selector: 'node.hover-highlight',
+        style: {
+          'border-width': 3,
+          'border-color': '#fff',
+          'border-opacity': 1,
+        }
+      },
+      {
+        selector: 'edge.hover-highlight',
+        style: {
+          'line-color': '#6c63ff',
+          'target-arrow-color': '#6c63ff',
+          'opacity': 1,
+          'width': 2.5,
+        }
+      },
+      {
+        selector: 'node.hover-dim',
+        style: { 'opacity': 0.12 }
+      },
+      {
+        selector: 'edge.hover-dim',
+        style: { 'opacity': 0.04 }
+      },
+      /* Search highlight */
+      {
+        selector: 'node.search-hit',
+        style: {
+          'border-width': 3,
+          'border-color': '#fff',
+          'border-opacity': 0.9,
+        }
+      },
+      /* Selected node */
+      {
+        selector: 'node.selected',
+        style: {
+          'border-width': 4,
+          'border-color': '#fff',
+          'border-opacity': 1,
+          'background-opacity': 1,
+        }
+      },
+      {
+        selector: 'node.selected-neighbor',
+        style: {
+          'border-width': 2,
+          'border-color': '#6c63ff',
+          'border-opacity': 0.8,
+        }
+      },
+    ],
+    layout: { name: 'cose', animate: true, animationDuration: 500, nodeRepulsion: () => 6000 },
+    wheelSensitivity: 0.3,
+  });
+
+  buildKindFilters();
+  applyFilters();
+
+  // -- Tooltip on hover --
+  const tooltip = document.getElementById('tooltip');
+
+  cy.on('mouseover', 'node', (evt) => {
+    const node = evt.target;
+    const pos = evt.renderedPosition;
+    const color = node.data('color');
+
+    tooltip.innerHTML = `
+      <h4>${escHtml(node.data('fullTitle'))}</h4>
+      <div class="meta">
+        <span class="badge badge-kind" style="background:${color}20;color:${color};border:1px solid ${color};padding:0.1rem 0.35rem;border-radius:3px;font-size:0.7rem">${node.data('kind')}</span>
+        importance: ${Math.round(node.data('importance') * 100)}%
+        &middot; ${node.data('createdAt')}
+      </div>`;
+    tooltip.style.display = 'block';
+    const graphArea = document.querySelector('.graph-area');
+    const rect = graphArea.getBoundingClientRect();
+    tooltip.style.left = Math.min(pos.x + 15, rect.width - 300) + 'px';
+    tooltip.style.top = (pos.y + 15) + 'px';
+
+    // Dim non-neighbors
+    cy.elements().addClass('hover-dim');
+    node.removeClass('hover-dim').addClass('hover-highlight');
+    node.connectedEdges().filter(e => e.style('display') !== 'none').removeClass('hover-dim').addClass('hover-highlight');
+    node.neighborhood('node').filter(n => n.style('display') !== 'none').removeClass('hover-dim');
+  });
+
+  cy.on('mouseout', 'node', () => {
+    tooltip.style.display = 'none';
+    cy.elements().removeClass('hover-dim hover-highlight');
+  });
+
+  // -- Click to select + show sidebar --
+  cy.on('tap', 'node', (evt) => {
+    const node = evt.target;
+    cy.elements().removeClass('selected selected-neighbor');
+    node.addClass('selected');
+    node.neighborhood('node').addClass('selected-neighbor');
+    loadSidebar(node.id());
+  });
+
+  // Click background to deselect
+  cy.on('tap', (evt) => {
+    if (evt.target === cy) {
+      closeSidebar();
+    }
+  });
+}
+
+// -- Filter event listeners --
+
+document.getElementById('importance-filter').addEventListener('input', (e) => {
+  minImportance = parseFloat(e.target.value);
+  document.getElementById('imp-val').textContent = Math.round(minImportance * 100) + '%';
+  applyFilters();
+});
+
+document.getElementById('graph-search').addEventListener('input', (e) => {
+  searchQuery = e.target.value.toLowerCase().trim();
+  applyFilters();
+});
+
+document.getElementById('layout-select').addEventListener('change', (e) => {
+  if (!cy) return;
+  cy.layout({
+    name: e.target.value,
+    animate: true,
+    animationDuration: 500,
+    nodeRepulsion: () => 6000,
+  }).run();
+});
+
+document.getElementById('fit-btn').addEventListener('click', () => {
+  if (cy) cy.fit(cy.nodes().filter(n => n.style('display') !== 'none'), 30);
+});
+
+document.getElementById('relayout-btn').addEventListener('click', () => {
+  if (!cy) return;
+  const name = document.getElementById('layout-select').value;
+  cy.layout({
+    name: name,
+    animate: true,
+    animationDuration: 500,
+    nodeRepulsion: () => 6000,
+    fit: true,
+  }).run();
+});
+
+document.getElementById('sidebar-close').addEventListener('click', closeSidebar);
+
+// Escape key closes sidebar
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSidebar();
+});
+
+init();
+</script>
+{% endblock %}

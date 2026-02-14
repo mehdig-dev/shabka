@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/kaizen-core",
-    "crates/kaizen-mcp",
-    "crates/kaizen-hooks",
-    "crates/kaizen-web",
-    "crates/kaizen-cli",
+    "crates/shabka-core",
+    "crates/shabka-mcp",
+    "crates/shabka-hooks",
+    "crates/shabka-web",
+    "crates/shabka-cli",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/mehdig-dev/kaizen"
-homepage = "https://github.com/mehdig-dev/kaizen"
+repository = "https://github.com/mehdig-dev/shabka"
+homepage = "https://github.com/mehdig-dev/shabka"
 readme = "README.md"
 keywords = ["llm", "memory", "mcp", "embeddings", "knowledge-graph"]
 categories = ["command-line-utilities", "database"]
@@ -21,7 +21,7 @@ rust-version = "1.80"
 
 [workspace.dependencies]
 # Internal crates
-kaizen-core = { path = "crates/kaizen-core", version = "0.1.0", default-features = false }
+shabka-core = { path = "crates/shabka-core", version = "0.1.0", default-features = false }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

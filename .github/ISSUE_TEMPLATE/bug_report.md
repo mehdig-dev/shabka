@@ -20,5 +20,5 @@ What happens instead. Include error messages or logs if available.
 **Environment**
 - OS:
 - Rust version:
-- Kaizen version:
+- Shabka version:
 - Embedding provider:

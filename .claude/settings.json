@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "kaizen-hooks",
+            "command": "shabka-hooks",
             "async": true
           }
         ]
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "kaizen-hooks",
+            "command": "shabka-hooks",
             "async": true
           }
         ]
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "kaizen-hooks",
+            "command": "shabka-hooks",
             "async": true
           }
         ]
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "kaizen-hooks",
+            "command": "shabka-hooks",
             "async": true
           }
         ]

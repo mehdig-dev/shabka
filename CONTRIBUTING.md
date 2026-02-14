@@ -1,12 +1,12 @@
-# Contributing to Kaizen
+# Contributing to Shabka
 
 Thanks for your interest in contributing!
 
 ## Getting Started
 
 ```bash
-git clone https://github.com/mehdig-dev/kaizen.git
-cd kaizen
+git clone https://github.com/mehdig-dev/shabka.git
+cd shabka
 just build
 just test
 ```
@@ -44,7 +44,7 @@ just test-integration     # Integration tests (requires: just db)
 See [README.md](README.md#architecture) for the workspace layout. Key conventions:
 
 - **HelixDB field names**: `memory_id`, `session_id` (not `id` — it's reserved)
-- **Config defaults**: hardcoded in `kaizen-core/src/config/mod.rs`
+- **Config defaults**: hardcoded in `shabka-core/src/config/mod.rs`
 - **Integration tests**: use `#[ignore]` so they're skipped without services running
 
 ## Reporting Issues

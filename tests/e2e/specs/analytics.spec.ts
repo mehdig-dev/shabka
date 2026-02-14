@@ -1,4 +1,4 @@
-import { test, expect, skipIfUnavailable } from '../fixtures/kaizen-fixtures';
+import { test, expect, skipIfUnavailable } from '../fixtures/shabka-fixtures';
 import { makeMemory } from '../helpers/test-data';
 
 test.beforeEach(async () => {

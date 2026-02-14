@@ -3,7 +3,7 @@ import { test } from '@playwright/test';
 const BASE_URL = process.env.BASE_URL || 'http://localhost:37737';
 
 /**
- * Check if the Kaizen web dashboard is reachable.
+ * Check if the Shabka web dashboard is reachable.
  * Returns null if healthy, or a skip reason string.
  */
 export async function checkServices(): Promise<string | null> {

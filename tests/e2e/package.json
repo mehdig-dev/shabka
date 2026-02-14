@@ -1,5 +1,5 @@
 {
-  "name": "kaizen-e2e",
+  "name": "shabka-e2e",
   "private": true,
   "scripts": {
     "test": "playwright test",

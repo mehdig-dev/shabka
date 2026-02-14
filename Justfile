@@ -1,4 +1,4 @@
-# Kaizen — Development task automation
+# Shabka — Development task automation
 
 # -- Development --
 
@@ -8,28 +8,28 @@ build:
 
 # Run tests (no-default-features avoids fastembed/ONNX on WSL2)
 test:
-    cargo test -p kaizen-core --no-default-features
+    cargo test -p shabka-core --no-default-features
 
 # Clippy lint + test
 check:
     cargo clippy --workspace --no-default-features -- -D warnings
-    cargo test -p kaizen-core --no-default-features
+    cargo test -p shabka-core --no-default-features
 
 # Run integration tests (requires HelixDB: just db)
 test-integration:
-    cargo test -p kaizen-core --no-default-features -- --ignored
+    cargo test -p shabka-core --no-default-features -- --ignored
 
 # Run only Ollama embedding tests (requires Ollama + HelixDB)
 test-ollama:
-    cargo test -p kaizen-core --no-default-features --test ollama_embedding -- --ignored
+    cargo test -p shabka-core --no-default-features --test ollama_embedding -- --ignored
 
 # Run only HelixDB roundtrip tests (requires HelixDB)
 test-helix:
-    cargo test -p kaizen-core --no-default-features --test helix_roundtrip -- --ignored
+    cargo test -p shabka-core --no-default-features --test helix_roundtrip -- --ignored
 
 # Run everything: unit + integration (requires HelixDB)
 test-all:
-    cargo test -p kaizen-core --no-default-features -- --include-ignored
+    cargo test -p shabka-core --no-default-features -- --include-ignored
 
 # Format code
 fmt:
@@ -57,49 +57,49 @@ db-logs:
 
 # Build and run the MCP server (no-default-features for WSL2 compat)
 mcp:
-    cargo run -p kaizen-mcp --no-default-features
+    cargo run -p shabka-mcp --no-default-features
 
 # Print the claude mcp add command for registration
 mcp-register:
-    @echo 'Run this command to register Kaizen with Claude Code:'
+    @echo 'Run this command to register Shabka with Claude Code:'
     @echo ''
-    @echo '  claude mcp add kaizen -- cargo run -p kaizen-mcp --no-default-features'
+    @echo '  claude mcp add shabka -- cargo run -p shabka-mcp --no-default-features'
     @echo ''
 
 # -- Hooks --
 
 # Build the hooks binary
 hooks-build:
-    cargo build -p kaizen-hooks --no-default-features
+    cargo build -p shabka-hooks --no-default-features
 
 # Install hooks binary to ~/.local/bin
 hooks-install: hooks-build
     mkdir -p ~/.local/bin
-    cp target/debug/kaizen-hooks ~/.local/bin/
+    cp target/debug/shabka-hooks ~/.local/bin/
 
 # Print hook registration instructions
 hooks-register:
     @echo 'Add to your .claude/settings.json (project-level) or ~/.claude/settings.json (global):'
     @echo ''
     @echo '  "hooks": {'
-    @echo '    "PostToolUse": [{ "type": "command", "command": "kaizen-hooks", "async": true }],'
-    @echo '    "PostToolUseFailure": [{ "type": "command", "command": "kaizen-hooks", "async": true }],'
-    @echo '    "Stop": [{ "type": "command", "command": "kaizen-hooks", "async": true }]'
+    @echo '    "PostToolUse": [{ "type": "command", "command": "shabka-hooks", "async": true }],'
+    @echo '    "PostToolUseFailure": [{ "type": "command", "command": "shabka-hooks", "async": true }],'
+    @echo '    "Stop": [{ "type": "command", "command": "shabka-hooks", "async": true }]'
     @echo '  }'
     @echo ''
-    @echo 'Make sure kaizen-hooks is in your PATH (run: just hooks-install)'
+    @echo 'Make sure shabka-hooks is in your PATH (run: just hooks-install)'
 
 # -- Web Dashboard --
 
 # Run the web dashboard (port 37737)
 web:
-    cargo run -p kaizen-web --no-default-features
+    cargo run -p shabka-web --no-default-features
 
 # -- CLI --
 
 # Build and install the CLI
 cli-install:
-    cargo install --path crates/kaizen-cli --no-default-features
+    cargo install --path crates/shabka-cli --no-default-features
 
 # -- E2E Tests --
 
