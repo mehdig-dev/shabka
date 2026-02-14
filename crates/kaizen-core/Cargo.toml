@@ -1,8 +1,14 @@
 [package]
 name = "kaizen-core"
+description = "Core library for Kaizen — persistent LLM memory with embeddings, graph intelligence, and smart dedup"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 tokio = { workspace = true }

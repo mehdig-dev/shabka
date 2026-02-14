@@ -1,8 +1,13 @@
 [package]
 name = "kaizen-hooks"
+description = "Claude Code hooks for Kaizen — auto-capture memories from coding sessions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [[bin]]
 name = "kaizen-hooks"
