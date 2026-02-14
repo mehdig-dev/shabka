@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  check:
+    name: Clippy + Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --no-default-features -- -D warnings
+
+      - name: Unit tests (kaizen-core)
+        run: cargo test -p kaizen-core --no-default-features
+
+      - name: Unit tests (kaizen-hooks)
+        run: cargo test -p kaizen-hooks --no-default-features
+
+      - name: Build all crates
+        run: cargo build --workspace --no-default-features
