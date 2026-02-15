@@ -44,7 +44,7 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
         let text = text.to_string();
         // fastembed is sync + CPU-bound, run in blocking task
         let result = tokio::task::spawn_blocking(move || {
-            let model = model.blocking_lock();
+            let mut model = model.blocking_lock();
             model.embed(vec![text], None)
         })
         .await
@@ -61,7 +61,7 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
         let model = self.model.clone();
         let texts: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
         let result = tokio::task::spawn_blocking(move || {
-            let model = model.blocking_lock();
+            let mut model = model.blocking_lock();
             model.embed(texts, None)
         })
         .await

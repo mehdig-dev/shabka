@@ -1,6 +1,10 @@
-# Shabka
+<p align="center">
+  <img src="shabka.png" alt="Shabka" width="200">
+</p>
 
-A shared LLM memory system. Save, search, and connect knowledge across AI coding sessions.
+<h1 align="center">Shabka</h1>
+
+<p align="center">A shared LLM memory system. Save, search, and connect knowledge across AI coding sessions.</p>
 
 Shabka gives LLMs persistent memory through an MCP server backed by [HelixDB](https://github.com/HelixDB/helix-db) (a graph-vector database). Memories are stored as nodes with vector embeddings for semantic search, connected by typed edges for relationship-aware retrieval.
 
