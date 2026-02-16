@@ -32,28 +32,28 @@ mod tests {
 
     #[test]
     fn test_estimate_tokens_short() {
-        // "hello" = 5 chars → (5+3)/4 = 2
+        // "hello" = 5 bytes → div_ceil(5, 4) = 2
         assert_eq!(estimate_tokens("hello"), 2);
     }
 
     #[test]
     fn test_estimate_tokens_long() {
-        // 400 chars → (400+3)/4 = 100 (integer division: 403/4 = 100)
+        // 400 bytes → div_ceil(400, 4) = 100
         let text = "a".repeat(400);
         assert_eq!(estimate_tokens(&text), 100);
     }
 
     #[test]
     fn test_estimate_tokens_exact_multiple() {
-        // "abcdefgh" = 8 chars → (8+3)/4 = 11/4 = 2
+        // "abcdefgh" = 8 bytes → div_ceil(8, 4) = 2
         assert_eq!(estimate_tokens("abcdefgh"), 2);
     }
 
     #[test]
     fn test_estimate_memory_tokens() {
-        // title "Test title" = 10 chars → (10+3)/4 = 3
-        // content "Some content here" = 17 chars → (17+3)/4 = 5
-        // tags ["rust","testing"] → "rust, testing" = 13 chars → (13+3)/4 = 4
+        // title "Test title" = 10 bytes → div_ceil(10, 4) = 3
+        // content "Some content here" = 17 bytes → div_ceil(17, 4) = 5
+        // tags ["rust","testing"] → "rust, testing" = 13 bytes → div_ceil(13, 4) = 4
         // overhead = 20
         // total = 3 + 5 + 4 + 20 = 32
         let memory = Memory::new(
@@ -69,8 +69,8 @@ mod tests {
 
     #[test]
     fn test_estimate_index_tokens() {
-        // title "Test title" = 10 chars → (10+3)/4 = 3
-        // tags ["rust"] → "rust" = 4 chars → (4+3)/4 = 1
+        // title "Test title" = 10 bytes → div_ceil(10, 4) = 3
+        // tags ["rust"] → "rust" = 4 bytes → div_ceil(4, 4) = 1
         // overhead = 15
         // total = 3 + 1 + 15 = 19
         let memory = Memory::new(
