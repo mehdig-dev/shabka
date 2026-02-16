@@ -1,11 +1,13 @@
 use crate::model::{Memory, MemoryIndex};
 
-/// Estimate token count from text using ~4 chars/token heuristic.
+/// Estimate token count using byte length / 4 heuristic.
+/// Note: uses byte length, not character count — overestimates for non-ASCII text.
 pub fn estimate_tokens(text: &str) -> usize {
     text.len().div_ceil(4)
 }
 
 /// Estimate tokens for a full Memory (title + content + tags + metadata overhead).
+/// Summary is excluded because it is derived from content (first 200 chars).
 pub fn estimate_memory_tokens(memory: &Memory) -> usize {
     estimate_tokens(&memory.title)
         + estimate_tokens(&memory.content)
