@@ -161,6 +161,30 @@ enum Cli {
         #[arg(long)]
         force: bool,
     },
+    /// Generate a paste-ready context pack from project memories
+    ContextPack {
+        /// Search query to find relevant memories (default: all)
+        #[arg(default_value = "")]
+        query: String,
+        /// Token budget for the pack (default 2000)
+        #[arg(long, default_value = "2000")]
+        tokens: usize,
+        /// Filter by project
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Filter by memory kind
+        #[arg(short, long)]
+        kind: Option<String>,
+        /// Filter by tags (can be repeated)
+        #[arg(short, long)]
+        tag: Option<Vec<String>>,
+        /// Output raw JSON instead of markdown
+        #[arg(long)]
+        json: bool,
+        /// Write output to file instead of stdout
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -338,6 +362,23 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
                 batch_size,
                 dry_run,
                 force,
+            )
+            .await
+        }
+        Cli::ContextPack {
+            query,
+            tokens,
+            project,
+            kind,
+            tag,
+            json,
+            output,
+        } => {
+            let storage = make_storage(config);
+            let embedder = EmbeddingService::from_config(&config.embedding)
+                .context("failed to create embedding service")?;
+            cmd_context_pack(
+                &storage, &embedder, user_id, &query, tokens, project, kind, tag, json, output,
             )
             .await
         }
@@ -656,6 +697,122 @@ async fn cmd_search(
                 score_color,
                 r.title
             );
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// context-pack
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_context_pack(
+    storage: &HelixStorage,
+    embedder: &EmbeddingService,
+    user_id: &str,
+    query: &str,
+    token_budget: usize,
+    project: Option<String>,
+    kind: Option<String>,
+    tags: Option<Vec<String>>,
+    json: bool,
+    output: Option<String>,
+) -> Result<()> {
+    use shabka_core::context_pack::{build_context_pack, format_context_pack};
+
+    let kind_filter: Option<MemoryKind> = match &kind {
+        Some(k) => Some(k.parse().map_err(|e: String| anyhow::anyhow!("{}", e))?),
+        None => None,
+    };
+    let tag_filter: Vec<String> = tags.unwrap_or_default();
+
+    // Wide search for candidates
+    let search_query = if query.is_empty() { "*" } else { query };
+    let embedding = embedder
+        .embed(search_query)
+        .await
+        .context("failed to embed query")?;
+
+    let mut candidates = storage
+        .vector_search(&embedding, 50)
+        .await
+        .context("vector search failed")?;
+
+    // Filter by privacy
+    sharing::filter_search_results(&mut candidates, user_id);
+
+    // Get relation counts for ranking
+    let memory_ids: Vec<Uuid> = candidates.iter().map(|(m, _)| m.id).collect();
+    let counts = storage
+        .count_relations(&memory_ids)
+        .await
+        .unwrap_or_default();
+    let count_map: HashMap<Uuid, usize> = counts.into_iter().collect();
+
+    // Build rank candidates, applying filters
+    let rank_candidates: Vec<RankCandidate> = candidates
+        .into_iter()
+        .filter(|(m, _)| {
+            if let Some(ref kf) = kind_filter {
+                if m.kind != *kf {
+                    return false;
+                }
+            }
+            if !tag_filter.is_empty() && !tag_filter.iter().any(|t| m.tags.contains(t)) {
+                return false;
+            }
+            if let Some(ref p) = project {
+                if m.project_id.as_deref() != Some(p.as_str()) {
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|(memory, vector_score)| {
+            let kw_score = ranking::keyword_score(search_query, &memory);
+            RankCandidate {
+                relation_count: count_map.get(&memory.id).copied().unwrap_or(0),
+                keyword_score: kw_score,
+                memory,
+                vector_score,
+            }
+        })
+        .collect();
+
+    let ranked = ranking::rank(rank_candidates, &RankingWeights::default());
+    let memories: Vec<Memory> = ranked.into_iter().map(|r| r.memory).collect();
+
+    // Build context pack
+    let pack = build_context_pack(memories, token_budget, project.clone());
+
+    if pack.memories.is_empty() {
+        eprintln!("{}", "No memories fit within the token budget.".dimmed());
+        return Ok(());
+    }
+
+    // Format output
+    let text = if json {
+        serde_json::to_string_pretty(&pack)?
+    } else {
+        format_context_pack(&pack)
+    };
+
+    // Write to file or stdout
+    match output {
+        Some(path) => {
+            std::fs::write(&path, &text).with_context(|| format!("failed to write to {path}"))?;
+            eprintln!(
+                "{} {} ({} memories, ~{} tokens)",
+                "Wrote".green(),
+                path,
+                pack.memories.len(),
+                pack.total_tokens,
+            );
+        }
+        None => {
+            println!("{text}");
         }
     }
 
