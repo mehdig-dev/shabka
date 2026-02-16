@@ -49,6 +49,9 @@ enum Cli {
         /// Output raw JSON instead of table
         #[arg(long)]
         json: bool,
+        /// Cap results to fit within a token budget (estimated)
+        #[arg(long)]
+        token_budget: Option<usize>,
     },
     /// Get a memory's full details by ID
     Get {
@@ -193,12 +196,22 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             tag,
             project,
             json,
+            token_budget,
         } => {
             let storage = make_storage(config);
             let embedder = EmbeddingService::from_config(&config.embedding)
                 .context("failed to create embedding service")?;
             cmd_search(
-                &storage, &embedder, user_id, &query, kind, limit, tag, project, json,
+                &storage,
+                &embedder,
+                user_id,
+                &query,
+                kind,
+                limit,
+                tag,
+                project,
+                json,
+                token_budget,
             )
             .await
         }
@@ -532,6 +545,7 @@ async fn cmd_search(
     tags: Option<Vec<String>>,
     project: Option<String>,
     json: bool,
+    token_budget: Option<usize>,
 ) -> Result<()> {
     let limit = limit.unwrap_or(10);
     let kind_filter: Option<MemoryKind> = match &kind {
@@ -599,6 +613,12 @@ async fn cmd_search(
         .take(limit)
         .map(|r| MemoryIndex::from((&r.memory, r.score)))
         .collect();
+
+    // Apply token budget if set
+    let results = match token_budget {
+        Some(budget) => ranking::budget_truncate(results, budget),
+        None => results,
+    };
 
     if results.is_empty() {
         if json {

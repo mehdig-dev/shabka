@@ -92,6 +92,12 @@ pub struct SearchParams {
     #[schemars(description = "Max results (default 10)")]
     #[serde(default = "default_limit")]
     pub limit: usize,
+
+    #[schemars(
+        description = "Cap results to fit within a token budget (estimated ~4 chars/token). Omit for no budget limit."
+    )]
+    #[serde(default)]
+    pub token_budget: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -414,6 +420,12 @@ impl ShabkaServer {
             .take(params.limit)
             .map(|r| MemoryIndex::from((&r.memory, r.score)))
             .collect();
+
+        // Apply token budget if set
+        let top = match params.token_budget {
+            Some(budget) => ranking::budget_truncate(top, budget),
+            None => top,
+        };
 
         let json = serde_json::to_string_pretty(&top)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
