@@ -2,6 +2,7 @@ pub mod assess;
 pub mod auto_tag;
 pub mod config;
 pub mod consolidate;
+pub mod context_pack;
 pub mod decay;
 pub mod dedup;
 pub mod embedding;
