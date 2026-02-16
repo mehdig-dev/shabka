@@ -1,4 +1,4 @@
-use crate::model::Memory;
+use crate::model::{Memory, MemoryIndex};
 use chrono::{DateTime, Utc};
 
 /// Weights for the fusion ranking formula.
@@ -148,10 +148,29 @@ pub fn rank(candidates: Vec<RankCandidate>, weights: &RankingWeights) -> Vec<Ran
     results
 }
 
+/// Greedily pack ranked results into a token budget.
+/// Results must already be sorted by score (descending).
+/// Stops as soon as the next result would exceed the remaining budget.
+pub fn budget_truncate(results: Vec<MemoryIndex>, token_budget: usize) -> Vec<MemoryIndex> {
+    use crate::tokens::estimate_index_tokens;
+
+    let mut remaining = token_budget;
+    let mut packed = Vec::new();
+    for result in results {
+        let cost = estimate_index_tokens(&result);
+        if cost > remaining {
+            break;
+        }
+        remaining -= cost;
+        packed.push(result);
+    }
+    packed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Memory, MemoryKind};
+    use crate::model::{Memory, MemoryIndex, MemoryKind};
     use chrono::Duration;
 
     fn test_memory(title: &str, importance: f32, days_old: i64) -> Memory {
@@ -269,5 +288,76 @@ mod tests {
         let sum =
             w.similarity + w.keyword + w.recency + w.importance + w.access_freq + w.graph_proximity;
         assert!((sum - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_budget_truncate_fits_all() {
+        let results = vec![
+            MemoryIndex {
+                id: uuid::Uuid::now_v7(),
+                title: "Short".to_string(),
+                kind: MemoryKind::Fact,
+                created_at: Utc::now(),
+                score: 0.9,
+                tags: vec![],
+            },
+            MemoryIndex {
+                id: uuid::Uuid::now_v7(),
+                title: "Also short".to_string(),
+                kind: MemoryKind::Fact,
+                created_at: Utc::now(),
+                score: 0.8,
+                tags: vec![],
+            },
+        ];
+        let packed = budget_truncate(results, 10000);
+        assert_eq!(packed.len(), 2);
+    }
+
+    #[test]
+    fn test_budget_truncate_exceeds_budget() {
+        let results = vec![
+            MemoryIndex {
+                id: uuid::Uuid::now_v7(),
+                title: "a".repeat(100),
+                kind: MemoryKind::Fact,
+                created_at: Utc::now(),
+                score: 0.9,
+                tags: vec![],
+            },
+            MemoryIndex {
+                id: uuid::Uuid::now_v7(),
+                title: "b".repeat(100),
+                kind: MemoryKind::Fact,
+                created_at: Utc::now(),
+                score: 0.8,
+                tags: vec![],
+            },
+        ];
+        // Each index: ~25 title tokens + 15 overhead = ~40 tokens
+        // Budget of 45 should fit only the first one
+        let packed = budget_truncate(results, 45);
+        assert_eq!(packed.len(), 1);
+        assert!(packed[0].title.starts_with('a'));
+    }
+
+    #[test]
+    fn test_budget_truncate_zero_budget() {
+        let results = vec![MemoryIndex {
+            id: uuid::Uuid::now_v7(),
+            title: "Something".to_string(),
+            kind: MemoryKind::Fact,
+            created_at: Utc::now(),
+            score: 0.9,
+            tags: vec![],
+        }];
+        let packed = budget_truncate(results, 0);
+        assert!(packed.is_empty());
+    }
+
+    #[test]
+    fn test_budget_truncate_empty_input() {
+        let packed = budget_truncate(vec![], 1000);
+        assert!(packed.is_empty());
     }
 }
