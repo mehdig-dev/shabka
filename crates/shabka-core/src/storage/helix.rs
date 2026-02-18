@@ -537,6 +537,19 @@ impl StorageBackend for HelixStorage {
         Ok(counts)
     }
 
+    async fn count_contradictions(&self, memory_ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
+        let mut counts = Vec::with_capacity(memory_ids.len());
+        for &id in memory_ids {
+            let relations = self.get_relations(id).await.unwrap_or_default();
+            let contradiction_count = relations
+                .iter()
+                .filter(|r| r.relation_type == RelationType::Contradicts)
+                .count();
+            counts.push((id, contradiction_count));
+        }
+        Ok(counts)
+    }
+
     async fn save_session(&self, session: &Session) -> Result<()> {
         let req = SaveSessionRequest {
             id: session.id.to_string(),

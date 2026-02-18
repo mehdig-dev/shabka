@@ -372,6 +372,9 @@ mod tests {
         async fn count_relations(&self, ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
             Ok(ids.iter().map(|id| (*id, 0)).collect())
         }
+        async fn count_contradictions(&self, ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
+            Ok(ids.iter().map(|id| (*id, 0)).collect())
+        }
         async fn save_session(&self, _: &Session) -> Result<()> {
             Ok(())
         }

@@ -267,6 +267,23 @@ mod tests {
                 .map(|id| (*id, rels.get(id).map(|v| v.len()).unwrap_or(0)))
                 .collect())
         }
+        async fn count_contradictions(&self, ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
+            let rels = self.relations.lock().unwrap();
+            Ok(ids
+                .iter()
+                .map(|id| {
+                    let count = rels
+                        .get(id)
+                        .map(|v| {
+                            v.iter()
+                                .filter(|r| r.relation_type == RelationType::Contradicts)
+                                .count()
+                        })
+                        .unwrap_or(0);
+                    (*id, count)
+                })
+                .collect())
+        }
         async fn save_session(&self, _: &Session) -> Result<()> {
             Ok(())
         }

@@ -63,6 +63,13 @@ pub trait StorageBackend: Send + Sync {
         memory_ids: &[Uuid],
     ) -> impl std::future::Future<Output = Result<Vec<(Uuid, usize)>>> + Send;
 
+    /// Count Contradicts relations for a batch of memory IDs.
+    /// Returns (id, count) pairs — only counts edges of type Contradicts.
+    fn count_contradictions(
+        &self,
+        memory_ids: &[Uuid],
+    ) -> impl std::future::Future<Output = Result<Vec<(Uuid, usize)>>> + Send;
+
     // -- Session --
 
     fn save_session(
