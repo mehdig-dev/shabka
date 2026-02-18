@@ -129,6 +129,7 @@ mod tests {
             importance,
             status: MemoryStatus::Active,
             privacy: crate::model::MemoryPrivacy::Private,
+            verification: crate::model::VerificationStatus::default(),
             project_id: None,
             session_id: None,
             created_by: "test".to_string(),

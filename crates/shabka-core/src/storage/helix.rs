@@ -268,6 +268,7 @@ fn record_to_memory(r: &MemoryRecord) -> Result<Memory> {
         status: serde_json::from_str(&format!("\"{}\"", r.status)).unwrap_or(MemoryStatus::Active),
         privacy: serde_json::from_str(&format!("\"{}\"", r.privacy))
             .unwrap_or(MemoryPrivacy::Private),
+        verification: VerificationStatus::default(),
         project_id: r.project_id.clone(),
         session_id: r.session_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
         created_by: r.created_by.clone(),

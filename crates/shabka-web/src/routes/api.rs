@@ -463,6 +463,7 @@ async fn update_memory(
         status,
         kind: None,
         privacy,
+        verification: None,
     };
 
     shabka_core::model::validate_update_input(&update)?;

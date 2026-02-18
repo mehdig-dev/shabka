@@ -852,6 +852,7 @@ impl ShabkaServer {
             status,
             kind: None,
             privacy,
+            verification: None,
         };
 
         shabka_core::model::validate_update_input(&input).map_err(to_mcp_error)?;

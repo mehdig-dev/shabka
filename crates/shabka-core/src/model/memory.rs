@@ -75,6 +75,8 @@ pub struct Memory {
     pub importance: f32,
     pub status: MemoryStatus,
     pub privacy: MemoryPrivacy,
+    #[serde(default)]
+    pub verification: VerificationStatus,
     pub project_id: Option<String>,
     pub session_id: Option<Uuid>,
     pub created_by: String,
@@ -104,6 +106,7 @@ impl Memory {
             importance: 0.5,
             status: MemoryStatus::Active,
             privacy: MemoryPrivacy::Private,
+            verification: VerificationStatus::default(),
             project_id: None,
             session_id: None,
             created_by,
@@ -150,6 +153,11 @@ impl Memory {
 
     pub fn with_privacy(mut self, privacy: MemoryPrivacy) -> Self {
         self.privacy = privacy;
+        self
+    }
+
+    pub fn with_verification(mut self, verification: VerificationStatus) -> Self {
+        self.verification = verification;
         self
     }
 
@@ -297,6 +305,41 @@ impl std::str::FromStr for MemoryPrivacy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationStatus {
+    #[default]
+    Unverified,
+    Verified,
+    Disputed,
+    Outdated,
+}
+
+impl std::fmt::Display for VerificationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unverified => write!(f, "unverified"),
+            Self::Verified => write!(f, "verified"),
+            Self::Disputed => write!(f, "disputed"),
+            Self::Outdated => write!(f, "outdated"),
+        }
+    }
+}
+
+impl std::str::FromStr for VerificationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "unverified" => Ok(Self::Unverified),
+            "verified" => Ok(Self::Verified),
+            "disputed" => Ok(Self::Disputed),
+            "outdated" => Ok(Self::Outdated),
+            _ => Err(format!("unknown verification status: {s}")),
+        }
+    }
+}
+
 /// Compact representation for Layer 1 search results (~50-100 tokens).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryIndex {
@@ -306,6 +349,8 @@ pub struct MemoryIndex {
     pub created_at: DateTime<Utc>,
     pub score: f32,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub verification: VerificationStatus,
 }
 
 impl From<(&Memory, f32)> for MemoryIndex {
@@ -317,6 +362,7 @@ impl From<(&Memory, f32)> for MemoryIndex {
             created_at: memory.created_at,
             score,
             tags: memory.tags.clone(),
+            verification: memory.verification,
         }
     }
 }
@@ -355,6 +401,7 @@ pub struct UpdateMemoryInput {
     pub status: Option<MemoryStatus>,
     pub kind: Option<MemoryKind>,
     pub privacy: Option<MemoryPrivacy>,
+    pub verification: Option<VerificationStatus>,
 }
 
 /// Search query parameters.
@@ -422,6 +469,8 @@ pub struct TimelineEntry {
     pub project_id: Option<String>,
     #[serde(default)]
     pub status: MemoryStatus,
+    #[serde(default)]
+    pub verification: VerificationStatus,
 }
 
 impl From<(&Memory, usize)> for TimelineEntry {
@@ -439,6 +488,7 @@ impl From<(&Memory, usize)> for TimelineEntry {
             created_by: memory.created_by.clone(),
             project_id: memory.project_id.clone(),
             status: memory.status,
+            verification: memory.verification,
         }
     }
 }

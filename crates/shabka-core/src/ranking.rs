@@ -170,7 +170,7 @@ pub fn budget_truncate(results: Vec<MemoryIndex>, token_budget: usize) -> Vec<Me
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Memory, MemoryIndex, MemoryKind};
+    use crate::model::{Memory, MemoryIndex, MemoryKind, VerificationStatus};
     use chrono::Duration;
 
     fn test_memory(title: &str, importance: f32, days_old: i64) -> Memory {
@@ -188,6 +188,7 @@ mod tests {
             importance,
             status: crate::model::MemoryStatus::Active,
             privacy: crate::model::MemoryPrivacy::Private,
+            verification: crate::model::VerificationStatus::default(),
             project_id: None,
             session_id: None,
             created_by: "test".to_string(),
@@ -300,6 +301,7 @@ mod tests {
                 created_at: Utc::now(),
                 score: 0.9,
                 tags: vec![],
+                verification: VerificationStatus::default(),
             },
             MemoryIndex {
                 id: uuid::Uuid::now_v7(),
@@ -308,6 +310,7 @@ mod tests {
                 created_at: Utc::now(),
                 score: 0.8,
                 tags: vec![],
+                verification: VerificationStatus::default(),
             },
         ];
         let packed = budget_truncate(results, 10000);
@@ -324,6 +327,7 @@ mod tests {
                 created_at: Utc::now(),
                 score: 0.9,
                 tags: vec![],
+                verification: VerificationStatus::default(),
             },
             MemoryIndex {
                 id: uuid::Uuid::now_v7(),
@@ -332,6 +336,7 @@ mod tests {
                 created_at: Utc::now(),
                 score: 0.8,
                 tags: vec![],
+                verification: VerificationStatus::default(),
             },
         ];
         // Each index: ~25 title tokens + 15 overhead = ~40 tokens
@@ -350,6 +355,7 @@ mod tests {
             created_at: Utc::now(),
             score: 0.9,
             tags: vec![],
+            verification: VerificationStatus::default(),
         }];
         let packed = budget_truncate(results, 0);
         assert!(packed.is_empty());

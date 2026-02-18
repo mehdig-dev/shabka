@@ -480,6 +480,7 @@ async fn update_memory(
         importance: Some(input.importance),
         status: None,
         privacy: None,
+        verification: None,
     };
 
     let memory = state.storage.update_memory(id, &update).await?;

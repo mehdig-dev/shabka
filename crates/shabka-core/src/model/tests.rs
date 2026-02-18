@@ -263,3 +263,48 @@ fn test_validate_update_empty_title_rejected() {
     let result = validate_update_input(&input);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_verification_status_roundtrip() {
+    use std::str::FromStr;
+
+    for (s, expected) in [
+        ("unverified", VerificationStatus::Unverified),
+        ("verified", VerificationStatus::Verified),
+        ("disputed", VerificationStatus::Disputed),
+        ("outdated", VerificationStatus::Outdated),
+    ] {
+        let parsed = VerificationStatus::from_str(s).unwrap();
+        assert_eq!(parsed, expected);
+        assert_eq!(parsed.to_string(), s);
+    }
+
+    assert!(VerificationStatus::from_str("invalid").is_err());
+}
+
+#[test]
+fn test_memory_default_verification() {
+    let memory = Memory::new(
+        "Test".to_string(),
+        "Content".to_string(),
+        MemoryKind::Fact,
+        "user".to_string(),
+    );
+    assert_eq!(memory.verification, VerificationStatus::Unverified);
+}
+
+#[test]
+fn test_memory_serde_without_verification() {
+    let memory = Memory::new(
+        "Compat test".to_string(),
+        "Backward compatibility".to_string(),
+        MemoryKind::Lesson,
+        "user".to_string(),
+    );
+
+    let mut json: serde_json::Value = serde_json::to_value(&memory).unwrap();
+    json.as_object_mut().unwrap().remove("verification");
+
+    let deserialized: Memory = serde_json::from_value(json).unwrap();
+    assert_eq!(deserialized.verification, VerificationStatus::Unverified);
+}
