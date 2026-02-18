@@ -257,6 +257,15 @@ pub struct AssessParams {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct VerifyMemoryParams {
+    #[schemars(description = "Memory ID to verify")]
+    pub id: String,
+
+    #[schemars(description = "Verification status: verified, disputed, outdated, or unverified")]
+    pub status: String,
+}
+
 fn default_history_limit() -> usize {
     20
 }
@@ -1349,6 +1358,49 @@ impl ShabkaServer {
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
     }
+
+    #[tool(
+        name = "verify_memory",
+        description = "Set verification status on a memory (verified, disputed, outdated, unverified). Verified memories rank higher in search results."
+    )]
+    async fn verify_memory(
+        &self,
+        Parameters(params): Parameters<VerifyMemoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let id = Uuid::parse_str(&params.id)
+            .map_err(|e| ErrorData::invalid_params(format!("invalid memory ID: {e}"), None))?;
+
+        let verification: VerificationStatus = params
+            .status
+            .parse()
+            .map_err(|e: String| ErrorData::invalid_params(e, None))?;
+
+        let input = UpdateMemoryInput {
+            verification: Some(verification),
+            ..Default::default()
+        };
+
+        let memory = self
+            .storage
+            .update_memory(id, &input)
+            .await
+            .map_err(to_mcp_error)?;
+
+        self.history.log(
+            &MemoryEvent::new(id, EventAction::Updated, self.user_id.clone())
+                .with_title(&memory.title)
+                .with_changes(vec![shabka_core::history::FieldChange {
+                    field: "verification".to_string(),
+                    old_value: String::new(),
+                    new_value: verification.to_string(),
+                }]),
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Memory '{}' marked as {verification}",
+            memory.title
+        ))]))
+    }
 }
 
 #[tool_handler]
@@ -1368,6 +1420,7 @@ impl ServerHandler for ShabkaServer {
                  Audit trail: history (chronological mutation events).\n\n\
                  Maintenance: reembed (re-embed memories after provider change).\n\n\
                  Quality: assess (scorecard with issue counts and overall score).\n\n\
+                 Trust: verify_memory (set verified/disputed/outdated status — verified memories rank higher).\n\n\
                  Always start with search, then drill down as needed."
                     .to_string(),
             ),
