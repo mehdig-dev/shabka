@@ -409,6 +409,7 @@ impl ShabkaServer {
                     vector_score,
                     keyword_score: kw_score,
                     relation_count,
+                    contradiction_count: 0,
                 }
             })
             .collect();

@@ -258,6 +258,7 @@ async fn test_search_ranking_ordering() {
             vector_score,
             keyword_score: 0.0,
             relation_count: 0,
+            contradiction_count: 0,
         })
         .collect();
 

@@ -644,6 +644,7 @@ async fn cmd_search(
                 keyword_score: kw_score,
                 memory,
                 vector_score,
+                contradiction_count: 0,
             }
         })
         .collect();
@@ -777,6 +778,7 @@ async fn cmd_context_pack(
                 keyword_score: kw_score,
                 memory,
                 vector_score,
+                contradiction_count: 0,
             }
         })
         .collect();

@@ -1,4 +1,5 @@
 use crate::model::{Memory, MemoryIndex};
+use crate::trust::trust_score;
 use chrono::{DateTime, Utc};
 
 /// Weights for the fusion ranking formula.
@@ -10,17 +11,19 @@ pub struct RankingWeights {
     pub importance: f32,
     pub access_freq: f32,
     pub graph_proximity: f32,
+    pub trust: f32,
 }
 
 impl Default for RankingWeights {
     fn default() -> Self {
         Self {
-            similarity: 0.30,
+            similarity: 0.25,
             keyword: 0.15,
-            recency: 0.20,
+            recency: 0.15,
             importance: 0.15,
             access_freq: 0.10,
-            graph_proximity: 0.10,
+            graph_proximity: 0.05,
+            trust: 0.15,
         }
     }
 }
@@ -31,6 +34,7 @@ pub struct RankCandidate {
     pub vector_score: f32,
     pub keyword_score: f32,
     pub relation_count: usize,
+    pub contradiction_count: usize,
 }
 
 /// Breakdown of how each component contributed to the final score.
@@ -42,6 +46,7 @@ pub struct ScoreBreakdown {
     pub importance: f32,
     pub access_freq: f32,
     pub graph_proximity: f32,
+    pub trust: f32,
 }
 
 /// Output of the ranking function.
@@ -117,13 +122,15 @@ pub fn rank(candidates: Vec<RankCandidate>, weights: &RankingWeights) -> Vec<Ran
             let imp = c.memory.importance;
             let acc = access_score(c.memory.accessed_at, c.memory.created_at, now);
             let graph = graph_score(c.relation_count);
+            let tru = trust_score(&c.memory, c.contradiction_count);
 
             let score = weights.similarity * sim
                 + weights.keyword * kw
                 + weights.recency * rec
                 + weights.importance * imp
                 + weights.access_freq * acc
-                + weights.graph_proximity * graph;
+                + weights.graph_proximity * graph
+                + weights.trust * tru;
 
             RankedResult {
                 memory: c.memory,
@@ -135,6 +142,7 @@ pub fn rank(candidates: Vec<RankCandidate>, weights: &RankingWeights) -> Vec<Ran
                     importance: imp,
                     access_freq: acc,
                     graph_proximity: graph,
+                    trust: tru,
                 },
             }
         })
@@ -248,12 +256,14 @@ mod tests {
                 vector_score: 0.95,
                 keyword_score: 0.8,
                 relation_count: 3,
+                contradiction_count: 0,
             },
             RankCandidate {
                 memory: test_memory("old-low", 0.3, 30),
                 vector_score: 0.4,
                 keyword_score: 0.2,
                 relation_count: 0,
+                contradiction_count: 0,
             },
         ];
 
@@ -286,8 +296,13 @@ mod tests {
     #[test]
     fn test_weights_sum_to_one() {
         let w = RankingWeights::default();
-        let sum =
-            w.similarity + w.keyword + w.recency + w.importance + w.access_freq + w.graph_proximity;
+        let sum = w.similarity
+            + w.keyword
+            + w.recency
+            + w.importance
+            + w.access_freq
+            + w.graph_proximity
+            + w.trust;
         assert!((sum - 1.0).abs() < 0.001);
     }
 
@@ -365,5 +380,37 @@ mod tests {
     fn test_budget_truncate_empty_input() {
         let packed = budget_truncate(vec![], 1000);
         assert!(packed.is_empty());
+    }
+
+    #[test]
+    fn test_trust_affects_ranking() {
+        let weights = RankingWeights::default();
+
+        let mut verified_mem = test_memory("verified", 0.5, 0);
+        verified_mem.verification = VerificationStatus::Verified;
+
+        let mut disputed_mem = test_memory("disputed", 0.5, 0);
+        disputed_mem.verification = VerificationStatus::Disputed;
+
+        let candidates = vec![
+            RankCandidate {
+                memory: disputed_mem,
+                vector_score: 0.9,
+                keyword_score: 0.8,
+                relation_count: 2,
+                contradiction_count: 2,
+            },
+            RankCandidate {
+                memory: verified_mem,
+                vector_score: 0.9,
+                keyword_score: 0.8,
+                relation_count: 2,
+                contradiction_count: 0,
+            },
+        ];
+
+        let results = rank(candidates, &weights);
+        assert_eq!(results[0].memory.title, "verified");
+        assert!(results[0].breakdown.trust > results[1].breakdown.trust);
     }
 }

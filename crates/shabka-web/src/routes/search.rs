@@ -81,6 +81,7 @@ async fn search(
                     keyword_score: kw_score,
                     memory,
                     vector_score,
+                    contradiction_count: 0,
                 }
             })
             .collect();
