@@ -1938,6 +1938,7 @@ async fn cmd_assess(
                 "stale": counts.stale,
                 "orphaned": counts.orphaned,
                 "duplicates": counts.duplicates,
+                "low_trust": counts.low_trust,
             },
             "issues": json_results,
         });
@@ -2003,6 +2004,12 @@ async fn cmd_assess(
             pct(counts.duplicates, total)
         );
     }
+    println!(
+        "  {:<20} {:>4}  ({})",
+        "Low trust:",
+        counts.low_trust,
+        pct(counts.low_trust, total)
+    );
 
     // Top issues (up to 10)
     if !results.is_empty() {
@@ -2049,6 +2056,10 @@ async fn cmd_assess(
     }
     if counts.duplicates > 0 {
         suggestions.push("Duplicates: review and consider deleting or merging");
+    }
+    if counts.low_trust > 0 {
+        suggestions
+            .push("Low trust: use `shabka verify <id> --status verified` to confirm or update");
     }
     if !suggestions.is_empty() {
         println!();

@@ -25,6 +25,9 @@ pub enum QualityIssue {
         other_title: String,
         similarity: f32,
     },
+    LowTrust {
+        trust_score: f32,
+    },
 }
 
 impl QualityIssue {
@@ -38,6 +41,7 @@ impl QualityIssue {
             QualityIssue::Stale { .. } => 5.0,
             QualityIssue::Orphaned => 5.0,
             QualityIssue::PossibleDuplicate { .. } => 15.0,
+            QualityIssue::LowTrust { .. } => 10.0,
         }
     }
 
@@ -51,6 +55,7 @@ impl QualityIssue {
             QualityIssue::Stale { .. } => "stale",
             QualityIssue::Orphaned => "orphaned",
             QualityIssue::PossibleDuplicate { .. } => "possible duplicate",
+            QualityIssue::LowTrust { .. } => "low trust",
         }
     }
 }
@@ -137,6 +142,12 @@ pub fn analyze_memory(
         issues.push(QualityIssue::Orphaned);
     }
 
+    // Low trust (verification status has 40% weight, so disputed/outdated will trigger)
+    let trust = crate::trust::trust_score(memory, 0);
+    if trust < 0.5 {
+        issues.push(QualityIssue::LowTrust { trust_score: trust });
+    }
+
     issues
 }
 
@@ -190,6 +201,7 @@ pub struct IssueCounts {
     pub stale: usize,
     pub orphaned: usize,
     pub duplicates: usize,
+    pub low_trust: usize,
 }
 
 impl IssueCounts {
@@ -206,6 +218,7 @@ impl IssueCounts {
                     QualityIssue::Stale { .. } => counts.stale += 1,
                     QualityIssue::Orphaned => counts.orphaned += 1,
                     QualityIssue::PossibleDuplicate { .. } => counts.duplicates += 1,
+                    QualityIssue::LowTrust { .. } => counts.low_trust += 1,
                 }
             }
         }
@@ -416,6 +429,36 @@ mod tests {
             .iter()
             .any(|i| matches!(i, QualityIssue::LowImportance { .. })));
         assert_eq!(issues.len(), 4);
+    }
+
+    #[test]
+    fn test_low_trust_flagged() {
+        use crate::model::{MemorySource, VerificationStatus};
+        // Outdated + AutoCapture + no tags + short content = trust ~0.42
+        let m = make_memory("Good title", "short", 0.5, vec![])
+            .with_verification(VerificationStatus::Outdated)
+            .with_source(MemorySource::AutoCapture {
+                hook: "test".to_string(),
+            });
+        let issues = analyze_memory(&m, &AssessConfig::default(), 1);
+        assert!(issues
+            .iter()
+            .any(|i| matches!(i, QualityIssue::LowTrust { .. })));
+    }
+
+    #[test]
+    fn test_low_trust_not_flagged_for_verified() {
+        let m = make_memory(
+            "Good title",
+            "content that is long enough to pass the minimum length check",
+            0.5,
+            vec!["tag".into()],
+        )
+        .with_verification(crate::model::VerificationStatus::Verified);
+        let issues = analyze_memory(&m, &AssessConfig::default(), 1);
+        assert!(!issues
+            .iter()
+            .any(|i| matches!(i, QualityIssue::LowTrust { .. })));
     }
 
     #[test]
