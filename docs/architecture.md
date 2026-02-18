@@ -34,11 +34,11 @@
 
 | Crate | Purpose |
 |-------|---------|
-| `shabka-core` | Data model, storage, embeddings, ranking, sharing, graph intelligence, history audit trail, smart dedup, PII scrubbing, LLM service, auto-tagging, quality assessment, memory consolidation, token estimation, context packs, retry logic |
-| `shabka-mcp` | MCP server (12 tools for LLM integration) |
+| `shabka-core` | Data model, storage, embeddings, ranking, sharing, graph intelligence, history audit trail, smart dedup, PII scrubbing, LLM service, auto-tagging, quality assessment, trust scoring, memory consolidation, token estimation, context packs, retry logic |
+| `shabka-mcp` | MCP server (13 tools for LLM integration) |
 | `shabka-hooks` | Auto-capture + auto-relate from Claude Code sessions |
 | `shabka-web` | Web dashboard (CRUD, search, graph visualization, REST API, analytics) |
-| `shabka-cli` | CLI tool (search, get, chain, prune, history, status, export, import, init, reembed, consolidate, context-pack) |
+| `shabka-cli` | CLI tool (search, get, chain, prune, history, status, export, import, init, reembed, consolidate, context-pack, verify) |
 
 ## Project Structure
 
@@ -57,7 +57,7 @@ shabka/
     │   │   ├── storage/    # HelixDB backend (StorageBackend trait)
     │   │   ├── embedding/  # Hash, OpenAI, Ollama, Gemini providers
     │   │   ├── config/     # Layered TOML config loading
-    │   │   ├── ranking.rs  # Fusion ranking (similarity + keyword + recency + importance + graph)
+    │   │   ├── ranking.rs  # Fusion ranking (similarity + keyword + recency + importance + graph + trust)
     │   │   ├── sharing.rs  # Privacy enforcement, visibility filtering
     │   │   ├── graph.rs    # Semantic auto-relate, chain traversal
     │   │   ├── decay.rs    # Staleness analysis, importance decay
@@ -66,6 +66,7 @@ shabka/
     │   │   ├── scrub.rs    # PII detection and redaction
     │   │   ├── llm.rs      # LLM service (Ollama, OpenAI, Gemini)
     │   │   ├── auto_tag.rs # LLM-powered auto-tagging
+    │   │   ├── trust.rs    # Trust score computation (verification, source, contradictions, quality)
     │   │   ├── assess.rs   # Memory quality assessment
     │   │   ├── consolidate.rs # Memory cluster consolidation
     │   │   ├── tokens.rs   # Token estimation (byte-length / 4 heuristic)

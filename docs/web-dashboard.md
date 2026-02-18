@@ -9,7 +9,7 @@ just web   # Start on http://localhost:37737
 ## Features
 
 - **Memory list** — Browse, filter by kind/project, bulk archive/delete, pagination
-- **Memory detail** — Markdown rendering, relations, similar memories, audit history, chain explorer graph
+- **Memory detail** — Markdown rendering, relations, similar memories, audit history, chain explorer graph, trust badge, verify/dispute/outdated buttons
 - **Create/edit** — Kind descriptions, markdown hints, char counter, project ID field, styled sliders
 - **Search** — Semantic + keyword search with ranked results and query term highlighting
 - **Graph** — Interactive knowledge graph visualization (Cytoscape.js)

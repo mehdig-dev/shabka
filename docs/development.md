@@ -12,7 +12,7 @@
 
 ```bash
 just build              # Build all crates
-just test               # Run unit tests (243 tests)
+just test               # Run unit tests (274 tests)
 just check              # Clippy + tests
 just fmt                # Format code
 
@@ -33,7 +33,7 @@ just cli-install        # Build and install the CLI
 
 ## Testing
 
-- **Unit tests (243 -- 206 core + 37 hooks):** Run with `just test`. No external services needed.
+- **Unit tests (274 -- 237 core + 37 hooks):** Run with `just test`. No external services needed.
 - **Integration tests (12):** Run with `just test-integration`. Requires HelixDB (`just db`); Ollama tests additionally need Ollama with `nomic-embed-text` pulled.
 - Integration tests use `#[ignore]` so they're skipped by default and won't break CI without services running.
 

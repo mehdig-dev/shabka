@@ -53,7 +53,7 @@ cd helix && helix push dev
 claude mcp add shabka -- cargo run --manifest-path /path/to/shabka/Cargo.toml -p shabka-mcp --no-default-features
 ```
 
-Open a new Claude Code session — the 12 Shabka tools are now available. Try: *"Save a memory about how our auth system works"* or *"Search for authentication"*.
+Open a new Claude Code session — the 13 Shabka tools are now available. Try: *"Save a memory about how our auth system works"* or *"Search for authentication"*.
 
 ## CLI Highlights
 
@@ -84,7 +84,7 @@ Browse, search, and manage memories with markdown rendering, graph visualization
 | [Configuration](docs/configuration.md) | TOML config reference, embedding providers, layered config |
 | [CLI Reference](docs/cli.md) | All commands and flags |
 | [Web Dashboard](docs/web-dashboard.md) | Dashboard features, REST API endpoints |
-| [API Reference](docs/api.md) | MCP tools (12), REST API, retrieval patterns |
+| [API Reference](docs/api.md) | MCP tools (13), REST API, retrieval patterns |
 | [Architecture](docs/architecture.md) | System diagram, workspace crates, project structure |
 | [Development](docs/development.md) | Build commands, testing, resetting HelixDB |
 

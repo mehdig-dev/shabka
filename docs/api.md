@@ -4,7 +4,7 @@
 
 ## MCP Tools
 
-Shabka exposes 12 tools via the MCP protocol:
+Shabka exposes 13 tools via the MCP protocol:
 
 | Tool | Description |
 |------|-------------|
@@ -12,7 +12,7 @@ Shabka exposes 12 tools via the MCP protocol:
 | `get_memories` | Retrieve full memory details by ID |
 | `timeline` | Chronological view with optional date/session filters |
 | `save_memory` | Create a new memory with auto-embedding, smart dedup, and auto-relate |
-| `update_memory` | Modify title, content, tags, importance, status |
+| `update_memory` | Modify title, content, tags, importance, status, verification |
 | `delete_memory` | Permanently remove a memory |
 | `relate_memories` | Link two memories (caused_by, fixes, supersedes, related, contradicts) |
 | `follow_chain` | BFS traversal along typed edges (debugging narratives, version history) |
@@ -20,6 +20,7 @@ Shabka exposes 12 tools via the MCP protocol:
 | `history` | View audit trail of memory mutations |
 | `assess` | Memory quality scorecard (0-100 score, issue counts, top issues) |
 | `consolidate` | Merge clusters of similar memories using LLM |
+| `verify_memory` | Set verification status (verified, disputed, outdated, unverified) |
 
 **Retrieval pattern:** Start with `search` (compact index, ~50-100 tokens each), drill into `get_memories` for full content, use `timeline` for chronological context. Pass `token_budget` to `search` to cap results within a token limit (~4 chars/token estimate) — useful for rate-limited or budget-conscious LLM usage.
 

@@ -54,6 +54,9 @@ shabka consolidate            # Merge clusters of similar memories (requires LLM
     --min-age <n>             # Min memory age in days (default from config)
     --json                    # JSON output
 
+shabka verify <memory-id>     # Set verification status on a memory
+    --status <status>         # verified, disputed, outdated, unverified
+
 shabka context-pack [query]   # Generate paste-ready context from project memories
     --tokens <n>              # Token budget (default 2000)
     --project <name>          # Filter by project
