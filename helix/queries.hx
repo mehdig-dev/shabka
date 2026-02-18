@@ -127,13 +127,15 @@ QUERY add_relation(source_id: String, target_id: String, relation_type: String, 
 
 QUERY get_relations(memory_id: String) =>
     source <- N<Memory>({memory_id: memory_id})
+    edges <- source::OutE<RelatesTo>
     target <- source::Out<RelatesTo>
-    RETURN source, target
+    RETURN source, target, edges
 
 QUERY get_incoming_relations(memory_id: String) =>
     target <- N<Memory>({memory_id: memory_id})
+    edges <- target::InE<RelatesTo>
     source <- target::In<RelatesTo>
-    RETURN source, target
+    RETURN source, target, edges
 
 // -- Session --
 

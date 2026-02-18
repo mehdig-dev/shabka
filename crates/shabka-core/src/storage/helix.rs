@@ -224,8 +224,9 @@ struct SearchQueryResult {
     results: Vec<SearchResultRecord>,
 }
 
-/// `get_relations` traverses `Out<RelatesTo>` and returns source node + target nodes.
-/// Edge properties (relation_type, strength) are NOT included in the traversal response.
+/// `get_relations` returns source + target nodes (via `Out<RelatesTo>`) and
+/// edge objects (via `OutE<RelatesTo>`) with relation_type and strength properties.
+/// Edges and targets are paired by index (same traversal order from the source node).
 #[derive(Deserialize)]
 struct TraversalResult {
     #[serde(default)]
@@ -233,6 +234,17 @@ struct TraversalResult {
     source: Option<MemoryRecord>,
     #[serde(default)]
     target: Vec<MemoryRecord>,
+    #[serde(default)]
+    edges: Vec<EdgeRecord>,
+}
+
+/// Edge object returned by `::OutE<RelatesTo>` / `::InE<RelatesTo>`.
+#[derive(Deserialize)]
+struct EdgeRecord {
+    #[serde(default)]
+    relation_type: Option<String>,
+    #[serde(default)]
+    strength: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -522,20 +534,25 @@ impl StorageBackend for HelixStorage {
         let req = GetRelationsRequest {
             memory_id: memory_id.to_string(),
         };
-        // HQL `Out<RelatesTo>` returns source + target nodes; edge properties are not included.
-        // We construct relations from the connected nodes with default edge metadata.
+        // `Out<RelatesTo>` returns target nodes, `OutE<RelatesTo>` returns edge objects.
+        // Edges and targets are paired by index (same traversal order).
         let result: TraversalResult = self.query("get_relations", &req).await?;
 
         result
             .target
             .iter()
-            .map(|t| {
+            .enumerate()
+            .map(|(i, t)| {
+                let edge = result.edges.get(i);
                 Ok(MemoryRelation {
                     source_id: memory_id,
                     target_id: Uuid::parse_str(&t.memory_id)
                         .map_err(|e| ShabkaError::Storage(e.to_string()))?,
-                    relation_type: RelationType::Related,
-                    strength: 0.5,
+                    relation_type: edge
+                        .and_then(|e| e.relation_type.as_deref())
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(RelationType::Related),
+                    strength: edge.and_then(|e| e.strength).unwrap_or(0.5),
                 })
             })
             .collect()
