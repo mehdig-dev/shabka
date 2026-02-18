@@ -3319,7 +3319,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3340,7 +3340,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3361,7 +3361,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-hooks"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3377,7 +3377,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3394,7 +3394,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "askama",
