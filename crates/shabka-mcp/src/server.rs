@@ -1375,6 +1375,9 @@ impl ShabkaServer {
             .parse()
             .map_err(|e: String| ErrorData::invalid_params(e, None))?;
 
+        // Fetch old state for audit trail before updating
+        let old_memory = self.storage.get_memory(id).await.map_err(to_mcp_error)?;
+
         let input = UpdateMemoryInput {
             verification: Some(verification),
             ..Default::default()
@@ -1391,7 +1394,7 @@ impl ShabkaServer {
                 .with_title(&memory.title)
                 .with_changes(vec![shabka_core::history::FieldChange {
                     field: "verification".to_string(),
-                    old_value: String::new(),
+                    old_value: old_memory.verification.to_string(),
                     new_value: verification.to_string(),
                 }]),
         );

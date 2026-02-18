@@ -142,7 +142,9 @@ pub fn analyze_memory(
         issues.push(QualityIssue::Orphaned);
     }
 
-    // Low trust (verification status has 40% weight, so disputed/outdated will trigger)
+    // Low trust — uses contradiction_count=0 because analyze_memory doesn't have
+    // access to the storage layer. Verification status alone (40% weight) is sufficient
+    // to flag Disputed/Outdated memories.
     let trust = crate::trust::trust_score(memory, 0);
     if trust < 0.5 {
         issues.push(QualityIssue::LowTrust { trust_score: trust });
