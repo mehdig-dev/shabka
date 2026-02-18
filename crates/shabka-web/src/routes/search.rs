@@ -71,6 +71,14 @@ async fn search(
             .unwrap_or_default();
         let count_map: HashMap<Uuid, usize> = counts.into_iter().collect();
 
+        // Get contradiction counts for trust scoring
+        let contradiction_counts = state
+            .storage
+            .count_contradictions(&memory_ids)
+            .await
+            .unwrap_or_default();
+        let contradiction_map: HashMap<Uuid, usize> = contradiction_counts.into_iter().collect();
+
         // Build rank candidates with keyword scoring
         let candidates: Vec<RankCandidate> = raw
             .into_iter()
@@ -79,9 +87,9 @@ async fn search(
                 RankCandidate {
                     relation_count: count_map.get(&memory.id).copied().unwrap_or(0),
                     keyword_score: kw_score,
+                    contradiction_count: contradiction_map.get(&memory.id).copied().unwrap_or(0),
                     memory,
                     vector_score,
-                    contradiction_count: 0,
                 }
             })
             .collect();

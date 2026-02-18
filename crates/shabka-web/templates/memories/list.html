@@ -59,6 +59,15 @@
       <h3>{{ item.entry.title }}</h3>
       <div class="meta">
         <span class="badge badge-kind">{{ item.entry.kind }}</span>
+        {% match item.entry.verification %}
+          {% when VerificationStatus::Verified %}
+            <span class="badge badge-verification-verified">verified</span>
+          {% when VerificationStatus::Disputed %}
+            <span class="badge badge-verification-disputed">disputed</span>
+          {% when VerificationStatus::Outdated %}
+            <span class="badge badge-verification-outdated">outdated</span>
+          {% when VerificationStatus::Unverified %}
+        {% endmatch %}
         {% if item.is_stale %}
           <span class="badge badge-stale">stale ({{ item.days_inactive }}d)</span>
         {% endif %}

@@ -65,6 +65,7 @@ pub struct UpdateMemoryRequest {
     pub importance: Option<f32>,
     pub status: Option<String>,
     pub privacy: Option<String>,
+    pub verification: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -455,6 +456,14 @@ async fn update_memory(
 
     let privacy = input.privacy.and_then(|s| s.parse().ok());
 
+    let verification = input
+        .verification
+        .map(|s| {
+            s.parse::<VerificationStatus>()
+                .map_err(ApiError::bad_request)
+        })
+        .transpose()?;
+
     let update = UpdateMemoryInput {
         title: input.title,
         content: input.content,
@@ -463,7 +472,7 @@ async fn update_memory(
         status,
         kind: None,
         privacy,
-        verification: None,
+        verification,
     };
 
     shabka_core::model::validate_update_input(&update)?;
@@ -607,6 +616,14 @@ async fn search(
         .unwrap_or_default();
     let count_map: std::collections::HashMap<Uuid, usize> = counts.into_iter().collect();
 
+    let contradiction_counts = state
+        .storage
+        .count_contradictions(&memory_ids)
+        .await
+        .unwrap_or_default();
+    let contradiction_map: std::collections::HashMap<Uuid, usize> =
+        contradiction_counts.into_iter().collect();
+
     let candidates: Vec<RankCandidate> = filtered
         .into_iter()
         .map(|(memory, vector_score)| {
@@ -614,9 +631,9 @@ async fn search(
             RankCandidate {
                 relation_count: count_map.get(&memory.id).copied().unwrap_or(0),
                 keyword_score: kw_score,
+                contradiction_count: contradiction_map.get(&memory.id).copied().unwrap_or(0),
                 memory,
                 vector_score,
-                contradiction_count: 0,
             }
         })
         .collect();

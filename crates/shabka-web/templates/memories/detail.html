@@ -23,14 +23,21 @@
 </div>
 {% endif %}
 
-<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem">
+<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center">
   <span class="badge badge-kind">{{ memory.kind }}</span>
   <span class="badge" style="background:var(--surface2);color:var(--text-dim)">{{ memory.status }}</span>
+  <span class="badge badge-verification-{{ verification_class }}">{{ memory.verification }}</span>
+  <span class="badge" style="background:var(--surface2);color:var(--text-dim);opacity:0.8">Trust: {{ trust_pct }}%</span>
   <span style="font-size:0.85rem;color:var(--text-dim)">
     Importance:
     <span class="importance-bar" style="width:80px"><span class="fill" style="width:{{ memory.importance * 100.0 }}%"></span></span>
     {{ "{:.0}"|format(memory.importance * 100.0) }}%
   </span>
+  <div class="verify-actions" style="margin-left:auto;display:flex;gap:0.35rem">
+    <button onclick="setVerification('verified')" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#22c55e;color:#22c55e">Verify</button>
+    <button onclick="setVerification('disputed')" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#f59e0b;color:#f59e0b">Dispute</button>
+    <button onclick="setVerification('outdated')" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#ef4444;color:#ef4444">Outdated</button>
+  </div>
 </div>
 
 {% if !memory.tags.is_empty() %}
@@ -59,6 +66,26 @@ document.getElementById('delete-form').addEventListener('submit', async function
   const ok = await window.showConfirm('Delete Memory', 'Permanently delete this memory? This cannot be undone.');
   if (ok) this.submit();
 });
+
+async function setVerification(status) {
+  const ok = await window.showConfirm('Set Verification', 'Mark this memory as "' + status + '"?');
+  if (!ok) return;
+  try {
+    const resp = await fetch('/api/v1/memories/{{ memory.id }}', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verification: status }),
+    });
+    if (resp.ok) {
+      window.showToast('Marked as ' + status, 'success');
+      setTimeout(function() { location.reload(); }, 500);
+    } else {
+      window.showToast('Failed to update verification', 'error');
+    }
+  } catch (e) {
+    window.showToast('Error: ' + e.message, 'error');
+  }
+}
 </script>
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;font-size:0.8rem;color:var(--text-dim);margin-bottom:1.5rem">

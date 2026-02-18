@@ -15,6 +15,8 @@ use shabka_core::storage::StorageBackend;
 use uuid::Uuid;
 
 use shabka_core::config::EmbeddingState;
+use shabka_core::model::RelationType;
+use shabka_core::trust::trust_score;
 
 use crate::error::AppError;
 use crate::AppState;
@@ -67,6 +69,8 @@ struct MemoryDetailTemplate {
     is_stale: bool,
     history_events: Vec<MemoryEvent>,
     similar_memories: Vec<SimilarMemoryEntry>,
+    trust_pct: u8,
+    verification_class: String,
 }
 
 struct SimilarMemoryEntry {
@@ -226,6 +230,11 @@ async fn show_memory(
         state.storage.get_memories(&related_ids).await?
     };
 
+    let contradiction_count = raw_relations
+        .iter()
+        .filter(|r| r.relation_type == RelationType::Contradicts)
+        .count();
+
     let relations = raw_relations
         .into_iter()
         .map(|r| {
@@ -276,6 +285,16 @@ async fn show_memory(
         _ => vec![],
     };
 
+    let trust = trust_score(&memory, contradiction_count);
+    let trust_pct = (trust * 100.0) as u8;
+    let verification_class = match memory.verification {
+        VerificationStatus::Verified => "verified",
+        VerificationStatus::Unverified => "unverified",
+        VerificationStatus::Disputed => "disputed",
+        VerificationStatus::Outdated => "outdated",
+    }
+    .to_string();
+
     let tmpl = MemoryDetailTemplate {
         memory,
         relations,
@@ -283,6 +302,8 @@ async fn show_memory(
         is_stale,
         history_events,
         similar_memories,
+        trust_pct,
+        verification_class,
     };
     Ok(Html(tmpl.render()?))
 }
