@@ -398,18 +398,29 @@ impl ShabkaServer {
         let count_map: std::collections::HashMap<Uuid, usize> =
             relation_counts.into_iter().collect();
 
+        let contradiction_counts = self
+            .storage
+            .count_contradictions(&memory_ids)
+            .await
+            .map_err(to_mcp_error)?;
+
+        let contradiction_map: std::collections::HashMap<Uuid, usize> =
+            contradiction_counts.into_iter().collect();
+
         // Build rank candidates with keyword scoring
         let candidates: Vec<RankCandidate> = filtered
             .into_iter()
             .map(|(memory, vector_score)| {
-                let relation_count = count_map.get(&memory.id).copied().unwrap_or(0);
+                let id = memory.id;
+                let relation_count = count_map.get(&id).copied().unwrap_or(0);
+                let contradiction_count = contradiction_map.get(&id).copied().unwrap_or(0);
                 let kw_score = ranking::keyword_score(&params.query, &memory);
                 RankCandidate {
                     memory,
                     vector_score,
                     keyword_score: kw_score,
                     relation_count,
-                    contradiction_count: 0,
+                    contradiction_count,
                 }
             })
             .collect();
