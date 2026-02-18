@@ -17,3 +17,4 @@ pub mod scrub;
 pub mod sharing;
 pub mod storage;
 pub mod tokens;
+pub mod trust;
