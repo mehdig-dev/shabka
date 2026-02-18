@@ -91,6 +91,7 @@ struct SaveMemoryRequest {
     created_at: String,
     updated_at: String,
     accessed_at: String,
+    verification: String,
     embedding: Vec<f32>,
 }
 
@@ -113,6 +114,7 @@ struct SaveMemoryNodeRequest {
     created_at: String,
     updated_at: String,
     accessed_at: String,
+    verification: String,
 }
 
 #[derive(Serialize)]
@@ -191,6 +193,8 @@ struct MemoryRecord {
     created_at: String,
     updated_at: String,
     accessed_at: String,
+    #[serde(default)]
+    verification: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -268,7 +272,11 @@ fn record_to_memory(r: &MemoryRecord) -> Result<Memory> {
         status: serde_json::from_str(&format!("\"{}\"", r.status)).unwrap_or(MemoryStatus::Active),
         privacy: serde_json::from_str(&format!("\"{}\"", r.privacy))
             .unwrap_or(MemoryPrivacy::Private),
-        verification: VerificationStatus::default(),
+        verification: r
+            .verification
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_default(),
         project_id: r.project_id.clone(),
         session_id: r.session_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
         created_by: r.created_by.clone(),
@@ -330,6 +338,7 @@ impl StorageBackend for HelixStorage {
             created_at: memory.created_at.to_rfc3339(),
             updated_at: memory.updated_at.to_rfc3339(),
             accessed_at: memory.accessed_at.to_rfc3339(),
+            verification: memory.verification.to_string().to_lowercase(),
             embedding: embedding.map(|e| e.to_vec()).unwrap_or_default(),
         };
 
@@ -383,6 +392,9 @@ impl StorageBackend for HelixStorage {
         if let Some(privacy) = input.privacy {
             memory.privacy = privacy;
         }
+        if let Some(verification) = input.verification {
+            memory.verification = verification;
+        }
         memory.updated_at = chrono::Utc::now();
 
         // HelixDB has no UPDATE — delete old node, then create new one (node-only, preserves vector).
@@ -410,6 +422,7 @@ impl StorageBackend for HelixStorage {
             created_at: memory.created_at.to_rfc3339(),
             updated_at: memory.updated_at.to_rfc3339(),
             accessed_at: memory.accessed_at.to_rfc3339(),
+            verification: memory.verification.to_string().to_lowercase(),
         };
 
         let _: EmptyResult = self.query("save_memory_node", &req).await?;

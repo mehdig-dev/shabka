@@ -20,7 +20,8 @@ N::Memory {
     created_by: String,
     created_at: String,
     updated_at: String,
-    accessed_at: String
+    accessed_at: String,
+    verification: String
 }
 
 N::Session {

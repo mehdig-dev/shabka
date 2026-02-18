@@ -20,6 +20,7 @@ QUERY save_memory(
     created_at: String,
     updated_at: String,
     accessed_at: String,
+    verification: String,
     embedding: [F64]
 ) =>
     memory <- AddN<Memory>({
@@ -39,7 +40,8 @@ QUERY save_memory(
         created_by: created_by,
         created_at: created_at,
         updated_at: updated_at,
-        accessed_at: accessed_at
+        accessed_at: accessed_at,
+        verification: verification
     })
     memory_vec <- AddV<MemoryEmbedding>(embedding, {
         memory_id: id,
@@ -65,7 +67,8 @@ QUERY save_memory_node(
     created_by: String,
     created_at: String,
     updated_at: String,
-    accessed_at: String
+    accessed_at: String,
+    verification: String
 ) =>
     memory <- AddN<Memory>({
         memory_id: id,
@@ -84,7 +87,8 @@ QUERY save_memory_node(
         created_by: created_by,
         created_at: created_at,
         updated_at: updated_at,
-        accessed_at: accessed_at
+        accessed_at: accessed_at,
+        verification: verification
     })
     RETURN memory
 
