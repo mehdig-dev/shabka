@@ -161,6 +161,14 @@ enum Cli {
         #[arg(long)]
         force: bool,
     },
+    /// Set verification status on a memory (verified, disputed, outdated)
+    Verify {
+        /// Memory ID (full UUID or short 8-char prefix)
+        id: String,
+        /// Verification status: verified, disputed, outdated, unverified
+        #[arg(long)]
+        status: String,
+    },
     /// Generate a paste-ready context pack from project memories
     ContextPack {
         /// Search query to find relevant memories (default: all)
@@ -364,6 +372,11 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
                 force,
             )
             .await
+        }
+        Cli::Verify { id, status } => {
+            let storage = make_storage(config);
+            let history = HistoryLogger::new(config.history.enabled);
+            cmd_verify(&storage, &history, user_id, &id, &status).await
         }
         Cli::ContextPack {
             query,
@@ -618,6 +631,12 @@ async fn cmd_search(
         .unwrap_or_default();
     let count_map: HashMap<Uuid, usize> = counts.into_iter().collect();
 
+    let contradiction_counts = storage
+        .count_contradictions(&memory_ids)
+        .await
+        .unwrap_or_default();
+    let contradiction_map: HashMap<Uuid, usize> = contradiction_counts.into_iter().collect();
+
     // Build rank candidates, applying kind/tag/project filters
     let rank_candidates: Vec<RankCandidate> = candidates
         .into_iter()
@@ -642,9 +661,9 @@ async fn cmd_search(
             RankCandidate {
                 relation_count: count_map.get(&memory.id).copied().unwrap_or(0),
                 keyword_score: kw_score,
+                contradiction_count: contradiction_map.get(&memory.id).copied().unwrap_or(0),
                 memory,
                 vector_score,
-                contradiction_count: 0,
             }
         })
         .collect();
@@ -752,6 +771,12 @@ async fn cmd_context_pack(
         .unwrap_or_default();
     let count_map: HashMap<Uuid, usize> = counts.into_iter().collect();
 
+    let contradiction_counts = storage
+        .count_contradictions(&memory_ids)
+        .await
+        .unwrap_or_default();
+    let contradiction_map: HashMap<Uuid, usize> = contradiction_counts.into_iter().collect();
+
     // Build rank candidates, applying filters
     let rank_candidates: Vec<RankCandidate> = candidates
         .into_iter()
@@ -776,9 +801,9 @@ async fn cmd_context_pack(
             RankCandidate {
                 relation_count: count_map.get(&memory.id).copied().unwrap_or(0),
                 keyword_score: kw_score,
+                contradiction_count: contradiction_map.get(&memory.id).copied().unwrap_or(0),
                 memory,
                 vector_score,
-                contradiction_count: 0,
             }
         })
         .collect();
@@ -822,13 +847,12 @@ async fn cmd_context_pack(
 }
 
 // ---------------------------------------------------------------------------
-// get
+// helpers
 // ---------------------------------------------------------------------------
 
-async fn cmd_get(storage: &HelixStorage, id: &str, json: bool) -> Result<()> {
-    // Resolve short IDs by searching timeline
-    let memory_id = if id.len() < 32 {
-        // Short prefix — scan timeline to find matching ID
+/// Resolve a memory ID from a full UUID or short prefix.
+async fn resolve_memory_id(storage: &HelixStorage, id: &str) -> Result<Uuid> {
+    if id.len() < 32 {
         let entries = storage
             .timeline(&TimelineQuery {
                 limit: 10000,
@@ -842,14 +866,22 @@ async fn cmd_get(storage: &HelixStorage, id: &str, json: bool) -> Result<()> {
             .collect();
         match matches.len() {
             0 => anyhow::bail!("no memory found matching prefix '{id}'"),
-            1 => matches[0].id,
+            1 => Ok(matches[0].id),
             n => {
                 anyhow::bail!("ambiguous prefix '{id}' matches {n} memories. Use a longer prefix.")
             }
         }
     } else {
-        Uuid::parse_str(id).context("invalid memory ID")?
-    };
+        Uuid::parse_str(id).context("invalid memory ID")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// get
+// ---------------------------------------------------------------------------
+
+async fn cmd_get(storage: &HelixStorage, id: &str, json: bool) -> Result<()> {
+    let memory_id = resolve_memory_id(storage, id).await?;
 
     let memory = storage
         .get_memory(memory_id)
@@ -899,8 +931,18 @@ async fn cmd_get(storage: &HelixStorage, id: &str, json: bool) -> Result<()> {
         println!("  {}  {}", "Tags:".dimmed(), memory.tags.join(", ").cyan());
     }
 
-    // Relations
+    // Compute trust score
     let relations = storage.get_relations(memory_id).await.unwrap_or_default();
+    let contradiction_count = relations
+        .iter()
+        .filter(|r| r.relation_type == RelationType::Contradicts)
+        .count();
+    let trust = shabka_core::trust::trust_score(&memory, contradiction_count);
+
+    println!("  {}  {}", "Verification:".dimmed(), memory.verification);
+    println!("  {}  {:.0}%", "Trust:".dimmed(), trust * 100.0);
+
+    // Relations
     if !relations.is_empty() {
         println!();
         println!(
@@ -930,6 +972,50 @@ async fn cmd_get(storage: &HelixStorage, id: &str, json: bool) -> Result<()> {
             );
         }
     }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// verify
+// ---------------------------------------------------------------------------
+
+async fn cmd_verify(
+    storage: &HelixStorage,
+    history: &HistoryLogger,
+    user_id: &str,
+    id_str: &str,
+    status_str: &str,
+) -> Result<()> {
+    let id = resolve_memory_id(storage, id_str).await?;
+    let verification: VerificationStatus =
+        status_str.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+
+    let old_memory = storage.get_memory(id).await.context("memory not found")?;
+
+    let input = UpdateMemoryInput {
+        verification: Some(verification),
+        ..Default::default()
+    };
+
+    let memory = storage.update_memory(id, &input).await?;
+
+    history.log(
+        &MemoryEvent::new(id, EventAction::Updated, user_id.to_string())
+            .with_title(&memory.title)
+            .with_changes(vec![shabka_core::history::FieldChange {
+                field: "verification".to_string(),
+                old_value: old_memory.verification.to_string(),
+                new_value: verification.to_string(),
+            }]),
+    );
+
+    println!(
+        "{} Memory '{}' marked as {}",
+        "✓".green(),
+        memory.title.bold(),
+        verification.to_string().cyan()
+    );
 
     Ok(())
 }
