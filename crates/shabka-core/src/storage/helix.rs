@@ -602,3 +602,336 @@ impl StorageBackend for HelixStorage {
         record_to_session(&result.session)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- EdgeRecord deserialization --
+
+    #[test]
+    fn test_edge_record_full() {
+        let json = r#"{"relation_type": "contradicts", "strength": 0.9}"#;
+        let edge: EdgeRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(edge.relation_type.as_deref(), Some("contradicts"));
+        assert_eq!(edge.strength, Some(0.9));
+    }
+
+    #[test]
+    fn test_edge_record_missing_fields() {
+        let json = r#"{}"#;
+        let edge: EdgeRecord = serde_json::from_str(json).unwrap();
+        assert!(edge.relation_type.is_none());
+        assert!(edge.strength.is_none());
+    }
+
+    #[test]
+    fn test_edge_record_partial() {
+        let json = r#"{"relation_type": "fixes"}"#;
+        let edge: EdgeRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(edge.relation_type.as_deref(), Some("fixes"));
+        assert!(edge.strength.is_none());
+    }
+
+    // -- TraversalResult deserialization --
+
+    #[test]
+    fn test_traversal_result_with_edges() {
+        let json = r#"{
+            "source": {"memory_id": "00000000-0000-0000-0000-000000000001", "kind": "observation", "title": "src", "content": "", "summary": "", "tags": "[]", "source": "\"manual\"", "scope": "\"global\"", "importance": 0.5, "status": "active", "privacy": "private", "created_by": "test", "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z", "accessed_at": "2025-01-01T00:00:00Z"},
+            "target": [
+                {"memory_id": "00000000-0000-0000-0000-000000000002", "kind": "observation", "title": "tgt", "content": "", "summary": "", "tags": "[]", "source": "\"manual\"", "scope": "\"global\"", "importance": 0.5, "status": "active", "privacy": "private", "created_by": "test", "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z", "accessed_at": "2025-01-01T00:00:00Z"}
+            ],
+            "edges": [
+                {"relation_type": "contradicts", "strength": 0.85}
+            ]
+        }"#;
+        let result: TraversalResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.target.len(), 1);
+        assert_eq!(result.edges.len(), 1);
+        assert_eq!(
+            result.edges[0].relation_type.as_deref(),
+            Some("contradicts")
+        );
+        assert_eq!(result.edges[0].strength, Some(0.85));
+    }
+
+    #[test]
+    fn test_traversal_result_no_edges_backward_compat() {
+        // Simulates old HelixDB responses before edge queries were added
+        let json = r#"{
+            "source": {"memory_id": "00000000-0000-0000-0000-000000000001", "kind": "observation", "title": "src", "content": "", "summary": "", "tags": "[]", "source": "\"manual\"", "scope": "\"global\"", "importance": 0.5, "status": "active", "privacy": "private", "created_by": "test", "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z", "accessed_at": "2025-01-01T00:00:00Z"},
+            "target": [
+                {"memory_id": "00000000-0000-0000-0000-000000000002", "kind": "observation", "title": "tgt", "content": "", "summary": "", "tags": "[]", "source": "\"manual\"", "scope": "\"global\"", "importance": 0.5, "status": "active", "privacy": "private", "created_by": "test", "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z", "accessed_at": "2025-01-01T00:00:00Z"}
+            ]
+        }"#;
+        let result: TraversalResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.target.len(), 1);
+        assert!(result.edges.is_empty(), "edges should default to empty vec");
+    }
+
+    // -- Edge-target pairing logic --
+
+    /// Replicates the pairing logic from get_relations() for unit testing
+    /// without needing an HTTP backend.
+    fn pair_edges_with_targets(source_id: Uuid, result: &TraversalResult) -> Vec<MemoryRelation> {
+        result
+            .target
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| {
+                let edge = result.edges.get(i);
+                Some(MemoryRelation {
+                    source_id,
+                    target_id: Uuid::parse_str(&t.memory_id).ok()?,
+                    relation_type: edge
+                        .and_then(|e| e.relation_type.as_deref())
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(RelationType::Related),
+                    strength: edge.and_then(|e| e.strength).unwrap_or(0.5),
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_pairing_matches_edge_properties() {
+        let source_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let target_id = "00000000-0000-0000-0000-000000000002".to_string();
+
+        let result = TraversalResult {
+            source: None,
+            target: vec![make_test_record(&target_id)],
+            edges: vec![EdgeRecord {
+                relation_type: Some("contradicts".to_string()),
+                strength: Some(0.9),
+            }],
+        };
+
+        let relations = pair_edges_with_targets(source_id, &result);
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].relation_type, RelationType::Contradicts);
+        assert!((relations[0].strength - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_pairing_defaults_when_edges_missing() {
+        let source_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let target_id = "00000000-0000-0000-0000-000000000002".to_string();
+
+        let result = TraversalResult {
+            source: None,
+            target: vec![make_test_record(&target_id)],
+            edges: vec![], // No edge data
+        };
+
+        let relations = pair_edges_with_targets(source_id, &result);
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].relation_type, RelationType::Related);
+        assert!((relations[0].strength - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_pairing_multiple_edges_mixed_types() {
+        let source_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let t1 = "00000000-0000-0000-0000-000000000002".to_string();
+        let t2 = "00000000-0000-0000-0000-000000000003".to_string();
+        let t3 = "00000000-0000-0000-0000-000000000004".to_string();
+
+        let result = TraversalResult {
+            source: None,
+            target: vec![
+                make_test_record(&t1),
+                make_test_record(&t2),
+                make_test_record(&t3),
+            ],
+            edges: vec![
+                EdgeRecord {
+                    relation_type: Some("fixes".to_string()),
+                    strength: Some(0.8),
+                },
+                EdgeRecord {
+                    relation_type: Some("contradicts".to_string()),
+                    strength: Some(0.7),
+                },
+                EdgeRecord {
+                    relation_type: Some("caused_by".to_string()),
+                    strength: Some(0.6),
+                },
+            ],
+        };
+
+        let relations = pair_edges_with_targets(source_id, &result);
+        assert_eq!(relations.len(), 3);
+        assert_eq!(relations[0].relation_type, RelationType::Fixes);
+        assert_eq!(relations[1].relation_type, RelationType::Contradicts);
+        assert_eq!(relations[2].relation_type, RelationType::CausedBy);
+        assert!((relations[0].strength - 0.8).abs() < f32::EPSILON);
+        assert!((relations[1].strength - 0.7).abs() < f32::EPSILON);
+        assert!((relations[2].strength - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_pairing_unknown_relation_type_defaults() {
+        let source_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let target_id = "00000000-0000-0000-0000-000000000002".to_string();
+
+        let result = TraversalResult {
+            source: None,
+            target: vec![make_test_record(&target_id)],
+            edges: vec![EdgeRecord {
+                relation_type: Some("unknown_type".to_string()),
+                strength: Some(0.3),
+            }],
+        };
+
+        let relations = pair_edges_with_targets(source_id, &result);
+        assert_eq!(relations.len(), 1);
+        // Unknown type falls back to Related
+        assert_eq!(relations[0].relation_type, RelationType::Related);
+        // Strength is still parsed from edge
+        assert!((relations[0].strength - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_pairing_fewer_edges_than_targets() {
+        let source_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let t1 = "00000000-0000-0000-0000-000000000002".to_string();
+        let t2 = "00000000-0000-0000-0000-000000000003".to_string();
+
+        let result = TraversalResult {
+            source: None,
+            target: vec![make_test_record(&t1), make_test_record(&t2)],
+            edges: vec![EdgeRecord {
+                relation_type: Some("fixes".to_string()),
+                strength: Some(0.8),
+            }],
+            // Only 1 edge for 2 targets — second target gets defaults
+        };
+
+        let relations = pair_edges_with_targets(source_id, &result);
+        assert_eq!(relations.len(), 2);
+        assert_eq!(relations[0].relation_type, RelationType::Fixes);
+        assert!((relations[0].strength - 0.8).abs() < f32::EPSILON);
+        // Second target falls back to defaults
+        assert_eq!(relations[1].relation_type, RelationType::Related);
+        assert!((relations[1].strength - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_contradiction_count_from_relations() {
+        let source_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let t1 = "00000000-0000-0000-0000-000000000002".to_string();
+        let t2 = "00000000-0000-0000-0000-000000000003".to_string();
+        let t3 = "00000000-0000-0000-0000-000000000004".to_string();
+
+        let result = TraversalResult {
+            source: None,
+            target: vec![
+                make_test_record(&t1),
+                make_test_record(&t2),
+                make_test_record(&t3),
+            ],
+            edges: vec![
+                EdgeRecord {
+                    relation_type: Some("contradicts".to_string()),
+                    strength: Some(0.9),
+                },
+                EdgeRecord {
+                    relation_type: Some("fixes".to_string()),
+                    strength: Some(0.8),
+                },
+                EdgeRecord {
+                    relation_type: Some("contradicts".to_string()),
+                    strength: Some(0.7),
+                },
+            ],
+        };
+
+        let relations = pair_edges_with_targets(source_id, &result);
+        let contradiction_count = relations
+            .iter()
+            .filter(|r| r.relation_type == RelationType::Contradicts)
+            .count();
+        assert_eq!(contradiction_count, 2);
+    }
+
+    // -- record_to_memory verification parsing --
+
+    #[test]
+    fn test_record_to_memory_parses_verification() {
+        let record = MemoryRecord {
+            memory_id: "00000000-0000-0000-0000-000000000001".to_string(),
+            kind: "observation".to_string(),
+            title: "test".to_string(),
+            content: "content".to_string(),
+            summary: "summary".to_string(),
+            tags: "[]".to_string(),
+            source: "\"manual\"".to_string(),
+            scope: "\"global\"".to_string(),
+            importance: 0.5,
+            status: "active".to_string(),
+            privacy: "private".to_string(),
+            project_id: None,
+            session_id: None,
+            created_by: "test".to_string(),
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+            accessed_at: "2025-01-01T00:00:00Z".to_string(),
+            verification: Some("verified".to_string()),
+        };
+        let memory = record_to_memory(&record).unwrap();
+        assert_eq!(memory.verification, VerificationStatus::Verified);
+    }
+
+    #[test]
+    fn test_record_to_memory_defaults_missing_verification() {
+        let record = MemoryRecord {
+            memory_id: "00000000-0000-0000-0000-000000000001".to_string(),
+            kind: "observation".to_string(),
+            title: "test".to_string(),
+            content: "content".to_string(),
+            summary: "summary".to_string(),
+            tags: "[]".to_string(),
+            source: "\"manual\"".to_string(),
+            scope: "\"global\"".to_string(),
+            importance: 0.5,
+            status: "active".to_string(),
+            privacy: "private".to_string(),
+            project_id: None,
+            session_id: None,
+            created_by: "test".to_string(),
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+            accessed_at: "2025-01-01T00:00:00Z".to_string(),
+            verification: None,
+        };
+        let memory = record_to_memory(&record).unwrap();
+        assert_eq!(memory.verification, VerificationStatus::Unverified);
+    }
+
+    // -- Helper --
+
+    fn make_test_record(memory_id: &str) -> MemoryRecord {
+        MemoryRecord {
+            memory_id: memory_id.to_string(),
+            kind: "observation".to_string(),
+            title: "test".to_string(),
+            content: "".to_string(),
+            summary: "".to_string(),
+            tags: "[]".to_string(),
+            source: "\"manual\"".to_string(),
+            scope: "\"global\"".to_string(),
+            importance: 0.5,
+            status: "active".to_string(),
+            privacy: "private".to_string(),
+            project_id: None,
+            session_id: None,
+            created_by: "test".to_string(),
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+            accessed_at: "2025-01-01T00:00:00Z".to_string(),
+            verification: None,
+        }
+    }
+}

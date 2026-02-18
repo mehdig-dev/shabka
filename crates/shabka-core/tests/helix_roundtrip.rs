@@ -246,6 +246,19 @@ async fn test_relations() {
         "m2 should be in m1's relations"
     );
 
+    // Verify edge properties are returned (not hardcoded defaults)
+    let rel = relations.iter().find(|r| r.target_id == m2.id).unwrap();
+    assert_eq!(
+        rel.relation_type,
+        RelationType::Fixes,
+        "relation_type should be Fixes, not default Related"
+    );
+    assert!(
+        (rel.strength - 0.8).abs() < 0.01,
+        "strength should be ~0.8, got {}",
+        rel.strength
+    );
+
     // Cleanup
     let _ = storage.delete_memory(m1.id).await;
     let _ = storage.delete_memory(m2.id).await;

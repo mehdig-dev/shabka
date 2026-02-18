@@ -333,3 +333,69 @@ async fn test_count_relations() {
     let _ = storage.delete_memory(m2.id).await;
     let _ = storage.delete_memory(m3.id).await;
 }
+
+/// Test count_contradictions: saves memories with Contradicts edges,
+/// verifies they are counted correctly (not defaulting to 0).
+#[tokio::test]
+#[ignore]
+async fn test_count_contradictions() {
+    if !helix_available().await || !ollama_available().await {
+        eprintln!("SKIP: HelixDB or Ollama not available");
+        return;
+    }
+
+    let storage = test_storage();
+    let embedder = ollama_embedder();
+
+    let m1 = test_memory("Contradictions: source", MemoryKind::Observation);
+    let m2 = test_memory("Contradictions: target1", MemoryKind::Observation);
+    let m3 = test_memory("Contradictions: target2", MemoryKind::Observation);
+
+    for m in [&m1, &m2, &m3] {
+        let emb = embedder.embed(&m.embedding_text()).await.unwrap();
+        storage.save_memory(m, Some(&emb)).await.unwrap();
+    }
+
+    // m1 contradicts m2
+    storage
+        .add_relation(&MemoryRelation {
+            source_id: m1.id,
+            target_id: m2.id,
+            relation_type: RelationType::Contradicts,
+            strength: 0.9,
+        })
+        .await
+        .unwrap();
+
+    // m1 relates to m3 (not a contradiction)
+    storage
+        .add_relation(&MemoryRelation {
+            source_id: m1.id,
+            target_id: m3.id,
+            relation_type: RelationType::Related,
+            strength: 0.5,
+        })
+        .await
+        .unwrap();
+
+    let counts = storage.count_contradictions(&[m1.id, m3.id]).await.unwrap();
+    let count_map: std::collections::HashMap<_, _> = counts.into_iter().collect();
+
+    // m1 has 1 Contradicts edge out of 2 total relations
+    assert_eq!(
+        *count_map.get(&m1.id).unwrap_or(&0),
+        1,
+        "m1 should have exactly 1 contradiction"
+    );
+    // m3 has 0 outgoing relations
+    assert_eq!(
+        *count_map.get(&m3.id).unwrap_or(&0),
+        0,
+        "m3 should have 0 contradictions"
+    );
+
+    // Cleanup
+    let _ = storage.delete_memory(m1.id).await;
+    let _ = storage.delete_memory(m2.id).await;
+    let _ = storage.delete_memory(m3.id).await;
+}
