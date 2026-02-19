@@ -1,39 +1,207 @@
-use crate::config::LlmConfig;
+use crate::config::{self, LlmConfig};
 use crate::error::{Result, ShabkaError};
+use crate::retry::with_retry;
+use std::future::Future;
+use std::pin::Pin;
 
-/// LLM text generation service. Reuses the same providers as embeddings
-/// (Ollama, OpenAI, Gemini) but for chat/completion instead of embeddings.
+/// Boxed future returning generated text — avoids `clippy::type_complexity` on the trait.
+type GenerateFuture<'a> =
+    Pin<Box<dyn Future<Output = std::result::Result<String, String>> + Send + 'a>>;
+
+// ---------------------------------------------------------------------------
+// Object-safe adapter around Rig's CompletionModel trait
+// ---------------------------------------------------------------------------
+
+/// Object-safe wrapper for Rig's `CompletionModel`.
+///
+/// Rig's `CompletionModel` trait is not dyn-compatible (associated types
+/// `Response`, `StreamingResponse`, `Client`). This thin adapter erases
+/// those, letting `LlmService` store any Rig model behind
+/// `Box<dyn RigCompletionAdapter>`.
+trait RigCompletionAdapter: Send + Sync {
+    /// Generate text from a prompt with an optional system message.
+    fn generate(
+        &self,
+        prompt: String,
+        system: Option<String>,
+        max_tokens: u64,
+    ) -> GenerateFuture<'_>;
+}
+
+/// Wrapper that pairs a Rig completion model with its string name.
+struct RigCompletionWrapper<M> {
+    model: M,
+    #[allow(dead_code)]
+    model_name: String,
+}
+
+/// Blanket implementation: any concrete Rig `CompletionModel` can be used as
+/// a `RigCompletionAdapter` provided its generic HTTP client type satisfies the
+/// necessary bounds.
+impl<M> RigCompletionAdapter for RigCompletionWrapper<M>
+where
+    M: rig::completion::CompletionModel + Send + Sync + 'static,
+{
+    fn generate(
+        &self,
+        prompt: String,
+        system: Option<String>,
+        max_tokens: u64,
+    ) -> GenerateFuture<'_> {
+        Box::pin(async move {
+            use rig::completion::AssistantContent;
+
+            let mut builder = self.model.completion_request(prompt);
+            if let Some(sys) = system {
+                builder = builder.preamble(sys);
+            }
+            builder = builder.max_tokens(max_tokens);
+
+            let response = builder.send().await.map_err(|e| e.to_string())?;
+
+            // response.choice is OneOrMany<AssistantContent>
+            // Extract the first text content by pattern matching
+            let text = response
+                .choice
+                .iter()
+                .find_map(|content| match content {
+                    AssistantContent::Text(t) => Some(t.text.clone()),
+                    _ => None,
+                })
+                .ok_or_else(|| "completion response contained no text content".to_string())?;
+
+            Ok(text)
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LlmService — public API (unchanged from callers' perspective)
+// ---------------------------------------------------------------------------
+
+/// LLM text generation service. Uses Rig's CompletionModel under the hood
+/// to support Ollama, OpenAI, Gemini, and Anthropic providers.
 pub struct LlmService {
-    provider: LlmProvider,
+    inner: Box<dyn RigCompletionAdapter>,
     config: LlmConfig,
-    client: reqwest::Client,
 }
 
 impl std::fmt::Debug for LlmService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LlmService")
-            .field("provider", &self.provider)
+            .field("provider", &self.config.provider)
             .field("model", &self.config.model)
             .finish()
     }
 }
 
-#[derive(Debug)]
-enum LlmProvider {
-    Ollama,
-    OpenAI,
-    Gemini,
-    Anthropic,
-}
-
 impl LlmService {
     /// Create an LLM service from configuration.
     pub fn from_config(config: &LlmConfig) -> Result<Self> {
-        let provider = match config.provider.as_str() {
-            "ollama" => LlmProvider::Ollama,
-            "openai" => LlmProvider::OpenAI,
-            "gemini" => LlmProvider::Gemini,
-            "anthropic" | "claude" => LlmProvider::Anthropic,
+        let inner: Box<dyn RigCompletionAdapter> = match config.provider.as_str() {
+            "ollama" => {
+                let base_url = config
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:11434".to_string());
+
+                let client: rig::providers::ollama::Client<reqwest::Client> =
+                    rig::providers::ollama::Client::<reqwest::Client>::builder()
+                        .api_key(rig::client::Nothing)
+                        .base_url(&base_url)
+                        .build()
+                        .map_err(|e| {
+                            ShabkaError::Llm(format!("failed to build Ollama LLM client: {e}"))
+                        })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
+            "openai" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "OPENAI_API_KEY",
+                    "openai",
+                    "LLM",
+                )?;
+
+                let mut builder =
+                    rig::providers::openai::Client::<reqwest::Client>::builder().api_key(&api_key);
+
+                if let Some(ref base_url) = config.base_url {
+                    builder = builder.base_url(base_url);
+                }
+
+                let client = builder.build().map_err(|e| {
+                    ShabkaError::Llm(format!("failed to build OpenAI LLM client: {e}"))
+                })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
+            "gemini" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "GEMINI_API_KEY",
+                    "gemini",
+                    "LLM",
+                )?;
+
+                let mut builder =
+                    rig::providers::gemini::Client::<reqwest::Client>::builder().api_key(&api_key);
+
+                if let Some(ref base_url) = config.base_url {
+                    builder = builder.base_url(base_url);
+                }
+
+                let client = builder.build().map_err(|e| {
+                    ShabkaError::Llm(format!("failed to build Gemini LLM client: {e}"))
+                })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
+            "anthropic" | "claude" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "ANTHROPIC_API_KEY",
+                    "anthropic",
+                    "LLM",
+                )?;
+
+                let mut builder = rig::providers::anthropic::Client::<reqwest::Client>::builder()
+                    .api_key(&api_key);
+
+                if let Some(ref base_url) = config.base_url {
+                    builder = builder.base_url(base_url);
+                }
+
+                let client = builder.build().map_err(|e| {
+                    ShabkaError::Llm(format!("failed to build Anthropic LLM client: {e}"))
+                })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
             other => {
                 return Err(ShabkaError::Config(format!(
                     "unknown LLM provider: '{other}' (expected 'ollama', 'openai', 'gemini', or 'anthropic')"
@@ -41,264 +209,31 @@ impl LlmService {
             }
         };
 
-        // Validate API key for providers that need one
-        match &provider {
-            LlmProvider::OpenAI => {
-                resolve_api_key(config, "OPENAI_API_KEY")?;
-            }
-            LlmProvider::Gemini => {
-                resolve_api_key(config, "GEMINI_API_KEY")?;
-            }
-            LlmProvider::Anthropic => {
-                resolve_api_key(config, "ANTHROPIC_API_KEY")?;
-            }
-            LlmProvider::Ollama => {}
-        }
-
         Ok(Self {
-            provider,
+            inner,
             config: config.clone(),
-            client: reqwest::Client::new(),
         })
     }
 
     /// Generate text from a prompt with an optional system message.
+    /// Wraps the Rig call with retry logic (3 retries, 200ms base delay).
     pub async fn generate(&self, prompt: &str, system: Option<&str>) -> Result<String> {
-        match &self.provider {
-            LlmProvider::Ollama => self.generate_ollama(prompt, system).await,
-            LlmProvider::OpenAI => self.generate_openai(prompt, system).await,
-            LlmProvider::Gemini => self.generate_gemini(prompt, system).await,
-            LlmProvider::Anthropic => self.generate_anthropic(prompt, system).await,
-        }
-    }
+        let max_tokens = self.config.max_tokens as u64;
+        let prompt_owned = prompt.to_string();
+        let system_owned = system.map(|s| s.to_string());
 
-    /// Ollama: POST {base_url}/api/generate
-    async fn generate_ollama(&self, prompt: &str, system: Option<&str>) -> Result<String> {
-        let base_url = self
-            .config
-            .base_url
-            .as_deref()
-            .unwrap_or("http://localhost:11434");
-
-        let url = format!("{}/api/generate", base_url.trim_end_matches('/'));
-
-        let mut body = serde_json::json!({
-            "model": self.config.model,
-            "prompt": prompt,
-            "stream": false,
-            "options": {
-                "num_predict": self.config.max_tokens,
+        with_retry(3, 200, || {
+            let p = prompt_owned.clone();
+            let s = system_owned.clone();
+            async move {
+                self.inner
+                    .generate(p, s, max_tokens)
+                    .await
+                    .map_err(ShabkaError::Llm)
             }
-        });
-
-        if let Some(sys) = system {
-            body["system"] = serde_json::Value::String(sys.to_string());
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ShabkaError::Embedding(format!("Ollama LLM request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ShabkaError::Embedding(format!(
-                "Ollama LLM error {status}: {text}"
-            )));
-        }
-
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ShabkaError::Embedding(format!("Ollama LLM response parse error: {e}")))?;
-
-        json["response"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                ShabkaError::Embedding("Ollama LLM response missing 'response' field".into())
-            })
+        })
+        .await
     }
-
-    /// OpenAI: POST {base_url}/v1/chat/completions
-    async fn generate_openai(&self, prompt: &str, system: Option<&str>) -> Result<String> {
-        let api_key = resolve_api_key(&self.config, "OPENAI_API_KEY")?;
-        let base_url = self
-            .config
-            .base_url
-            .as_deref()
-            .unwrap_or("https://api.openai.com");
-
-        let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
-
-        let mut messages = Vec::new();
-        if let Some(sys) = system {
-            messages.push(serde_json::json!({"role": "system", "content": sys}));
-        }
-        messages.push(serde_json::json!({"role": "user", "content": prompt}));
-
-        let body = serde_json::json!({
-            "model": self.config.model,
-            "messages": messages,
-            "max_tokens": self.config.max_tokens,
-        });
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ShabkaError::Embedding(format!("OpenAI LLM request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ShabkaError::Embedding(format!(
-                "OpenAI LLM error {status}: {text}"
-            )));
-        }
-
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ShabkaError::Embedding(format!("OpenAI LLM response parse error: {e}")))?;
-
-        json["choices"][0]["message"]["content"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| ShabkaError::Embedding("OpenAI LLM response missing content".into()))
-    }
-
-    /// Anthropic: POST {base_url}/v1/messages
-    async fn generate_anthropic(&self, prompt: &str, system: Option<&str>) -> Result<String> {
-        let api_key = resolve_api_key(&self.config, "ANTHROPIC_API_KEY")?;
-        let base_url = self
-            .config
-            .base_url
-            .as_deref()
-            .unwrap_or("https://api.anthropic.com");
-
-        let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
-
-        let mut body = serde_json::json!({
-            "model": self.config.model,
-            "max_tokens": self.config.max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        });
-
-        if let Some(sys) = system {
-            body["system"] = serde_json::Value::String(sys.to_string());
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ShabkaError::Embedding(format!("Anthropic LLM request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ShabkaError::Embedding(format!(
-                "Anthropic LLM error {status}: {text}"
-            )));
-        }
-
-        let json: serde_json::Value = resp.json().await.map_err(|e| {
-            ShabkaError::Embedding(format!("Anthropic LLM response parse error: {e}"))
-        })?;
-
-        // Anthropic response: {"content": [{"type": "text", "text": "..."}]}
-        json["content"][0]["text"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                ShabkaError::Embedding("Anthropic LLM response missing text content".into())
-            })
-    }
-
-    /// Gemini: POST generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-    async fn generate_gemini(&self, prompt: &str, system: Option<&str>) -> Result<String> {
-        let api_key = resolve_api_key(&self.config, "GEMINI_API_KEY")?;
-        let base_url = self
-            .config
-            .base_url
-            .as_deref()
-            .unwrap_or("https://generativelanguage.googleapis.com");
-
-        let url = format!(
-            "{}/v1beta/models/{}:generateContent?key={}",
-            base_url.trim_end_matches('/'),
-            self.config.model,
-            api_key,
-        );
-
-        let mut body = serde_json::json!({
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": self.config.max_tokens,
-            }
-        });
-
-        if let Some(sys) = system {
-            body["systemInstruction"] = serde_json::json!({"parts": [{"text": sys}]});
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ShabkaError::Embedding(format!("Gemini LLM request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ShabkaError::Embedding(format!(
-                "Gemini LLM error {status}: {text}"
-            )));
-        }
-
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ShabkaError::Embedding(format!("Gemini LLM response parse error: {e}")))?;
-
-        json["candidates"][0]["content"]["parts"][0]["text"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| ShabkaError::Embedding("Gemini LLM response missing text".into()))
-    }
-}
-
-/// Resolve an API key from config, a custom env var, or a default env var.
-fn resolve_api_key(config: &LlmConfig, default_env_var: &str) -> Result<String> {
-    if let Some(ref key) = config.api_key {
-        if !key.is_empty() {
-            return Ok(key.clone());
-        }
-    }
-
-    let env_var_name = config.env_var.as_deref().unwrap_or(default_env_var);
-
-    std::env::var(env_var_name).map_err(|_| {
-        ShabkaError::Config(format!(
-            "{} LLM provider requires an API key (set llm.api_key or {})",
-            config.provider, env_var_name
-        ))
-    })
 }
 
 #[cfg(test)]
@@ -428,12 +363,9 @@ mod tests {
 
     #[test]
     fn test_resolve_api_key_from_config() {
-        let config = LlmConfig {
-            provider: "openai".into(),
-            api_key: Some("config-key".into()),
-            ..Default::default()
-        };
-        let key = resolve_api_key(&config, "OPENAI_API_KEY").unwrap();
+        let key =
+            config::resolve_api_key(Some("config-key"), None, "OPENAI_API_KEY", "openai", "LLM")
+                .unwrap();
         assert_eq!(key, "config-key");
     }
 
@@ -446,7 +378,14 @@ mod tests {
             env_var: Some("MY_LLM_KEY".into()),
             ..Default::default()
         };
-        let key = resolve_api_key(&config, "OPENAI_API_KEY").unwrap();
+        let key = config::resolve_api_key(
+            config.api_key.as_deref(),
+            config.env_var.as_deref(),
+            "OPENAI_API_KEY",
+            "openai",
+            "LLM",
+        )
+        .unwrap();
         assert_eq!(key, "env-llm-key");
         std::env::remove_var("MY_LLM_KEY");
     }
