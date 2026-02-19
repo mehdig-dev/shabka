@@ -1,57 +1,90 @@
 mod provider;
 
-mod gemini;
 mod hash;
-mod openai;
 
+pub use hash::HashEmbeddingProvider;
 pub use provider::EmbeddingProvider;
 
-pub use gemini::GeminiEmbeddingProvider;
-pub use hash::HashEmbeddingProvider;
-pub use openai::OpenAIEmbeddingProvider;
-
-use crate::config::EmbeddingConfig;
+use crate::config::{self, EmbeddingConfig};
 use crate::error::{Result, ShabkaError};
 use crate::retry::with_retry;
+use std::future::Future;
+use std::pin::Pin;
+
+/// Boxed future returning embed results — avoids `clippy::type_complexity` on the trait.
+type EmbedFuture<'a> =
+    Pin<Box<dyn Future<Output = std::result::Result<Vec<Vec<f64>>, String>> + Send + 'a>>;
+
+// ---------------------------------------------------------------------------
+// Object-safe adapter around Rig's EmbeddingModel trait
+// ---------------------------------------------------------------------------
+
+/// Object-safe wrapper for Rig's `EmbeddingModel`.
+///
+/// Rig's `EmbeddingModel` trait is not dyn-compatible (associated type `Client`,
+/// `impl IntoIterator` parameter).  This thin adapter erases those, letting
+/// `EmbeddingService` store any Rig model behind `Box<dyn RigEmbedAdapter>`.
+trait RigEmbedAdapter: Send + Sync {
+    /// Embed one or more texts, returning f64 vectors (Rig's native precision).
+    fn embed_texts(&self, texts: Vec<String>) -> EmbedFuture<'_>;
+
+    /// Model identifier string.
+    fn model_id(&self) -> &str;
+}
+
+/// Blanket implementation: any concrete Rig `EmbeddingModel` can be used as
+/// a `RigEmbedAdapter` provided its generic HTTP client type satisfies the
+/// necessary bounds.
+impl<M> RigEmbedAdapter for RigModelWrapper<M>
+where
+    M: rig::embeddings::EmbeddingModel + Send + Sync + 'static,
+{
+    fn embed_texts(&self, texts: Vec<String>) -> EmbedFuture<'_> {
+        Box::pin(async move {
+            let embeddings = self
+                .model
+                .embed_texts(texts)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(embeddings.into_iter().map(|e| e.vec).collect())
+        })
+    }
+
+    fn model_id(&self) -> &str {
+        &self.model_name
+    }
+}
+
+/// Wrapper that pairs a Rig model with its string name (for `model_id()`).
+struct RigModelWrapper<M> {
+    model: M,
+    model_name: String,
+}
+
+// ---------------------------------------------------------------------------
+// EmbeddingService — public API (unchanged from callers' perspective)
+// ---------------------------------------------------------------------------
+
+enum EmbeddingInner {
+    /// Any Rig-backed remote provider (OpenAI, Ollama, Gemini).
+    Rig(Box<dyn RigEmbedAdapter>),
+    /// Local deterministic hash provider (no network).
+    Hash(HashEmbeddingProvider),
+}
 
 /// Concrete embedding service that dispatches to the configured provider.
-/// Uses an enum instead of `dyn EmbeddingProvider` because the trait uses RPITIT.
-pub enum EmbeddingService {
-    OpenAI(OpenAIEmbeddingProvider),
-    /// Ollama uses OpenAI-compatible API but needs a distinct variant for display.
-    Ollama(OpenAIEmbeddingProvider),
-    Gemini(GeminiEmbeddingProvider),
-    Hash(HashEmbeddingProvider),
+pub struct EmbeddingService {
+    inner: EmbeddingInner,
+    provider: &'static str,
+    dimensions: usize,
 }
 
 impl std::fmt::Debug for EmbeddingService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::OpenAI(_) => f.debug_tuple("OpenAI").finish(),
-            Self::Ollama(_) => f.debug_tuple("Ollama").finish(),
-            Self::Gemini(_) => f.debug_tuple("Gemini").finish(),
-            Self::Hash(_) => f.debug_tuple("Hash").finish(),
-        }
+        f.debug_struct("EmbeddingService")
+            .field("provider", &self.provider)
+            .finish()
     }
-}
-
-/// Resolve an API key from config, a custom env var, or a default env var.
-fn resolve_api_key(config: &EmbeddingConfig, default_env_var: &str) -> Result<String> {
-    if let Some(ref key) = config.api_key {
-        if !key.is_empty() {
-            return Ok(key.clone());
-        }
-    }
-
-    let env_var_name = config.env_var.as_deref().unwrap_or(default_env_var);
-
-    std::env::var(env_var_name).map_err(|_| {
-        ShabkaError::Config(format!(
-            "{} embedding provider requires an API key \
-             (set embedding.api_key or {})",
-            config.provider, env_var_name
-        ))
-    })
 }
 
 impl EmbeddingService {
@@ -61,30 +94,46 @@ impl EmbeddingService {
             "local" => Err(ShabkaError::Config(
                 "local embedding provider has been removed; use 'ollama', 'openai', 'gemini', or 'hash'".into(),
             )),
-            "openai" => {
-                let api_key = resolve_api_key(config, "OPENAI_API_KEY")?;
-                let model = config.model.clone();
-                Ok(Self::OpenAI(OpenAIEmbeddingProvider::with_config(
-                    api_key,
-                    model,
-                    config.dimensions,
-                    config.base_url.clone(),
-                )))
-            }
-            "ollama" => {
-                // Ollama uses OpenAI-compatible API — no auth required
-                let api_key = config
-                    .api_key
-                    .clone()
-                    .or_else(|| {
-                        config
-                            .env_var
-                            .as_deref()
-                            .and_then(|var| std::env::var(var).ok())
-                    })
-                    .unwrap_or_default();
 
-                let model = if config.model == "hash-128d" {
+            "openai" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "OPENAI_API_KEY",
+                    "openai",
+                    "embedding",
+                )?;
+
+                let model_name = config.model.clone();
+                let dims = config.dimensions.unwrap_or(1536);
+
+                let mut builder =
+                    rig::providers::openai::Client::<reqwest::Client>::builder()
+                        .api_key(&api_key);
+
+                if let Some(ref base_url) = config.base_url {
+                    builder = builder.base_url(base_url);
+                }
+
+                let client = builder.build().map_err(|e| {
+                    ShabkaError::Embedding(format!("failed to build OpenAI client: {e}"))
+                })?;
+
+                use rig::prelude::EmbeddingsClient;
+                let model = client.embedding_model_with_ndims(&model_name, dims);
+
+                Ok(Self {
+                    inner: EmbeddingInner::Rig(Box::new(RigModelWrapper {
+                        model,
+                        model_name,
+                    })),
+                    provider: "openai",
+                    dimensions: dims,
+                })
+            }
+
+            "ollama" => {
+                let model_name = if config.model == "hash-128d" {
                     "nomic-embed-text".to_string()
                 } else {
                     config.model.clone()
@@ -93,39 +142,81 @@ impl EmbeddingService {
                 let base_url = config
                     .base_url
                     .clone()
-                    .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+                    .unwrap_or_else(|| "http://localhost:11434".to_string());
 
-                // Default to 768d for nomic-embed-text; Ollama models typically aren't 1536d
-                let dimensions = config.dimensions.or_else(|| {
-                    if model == "nomic-embed-text" {
-                        Some(768)
-                    } else {
-                        None
-                    }
-                });
+                // Default to 768d — nomic-embed-text and most Ollama models use this
+                let dims = config.dimensions.unwrap_or(768);
 
-                Ok(Self::Ollama(OpenAIEmbeddingProvider::with_config(
-                    api_key,
-                    model,
-                    dimensions,
-                    Some(base_url),
-                )))
+                let client =
+                    rig::providers::ollama::Client::<reqwest::Client>::builder()
+                        .api_key(rig::client::Nothing)
+                        .base_url(&base_url)
+                        .build()
+                        .map_err(|e| {
+                            ShabkaError::Embedding(format!("failed to build Ollama client: {e}"))
+                        })?;
+
+                use rig::prelude::EmbeddingsClient;
+                let model = client.embedding_model_with_ndims(&model_name, dims);
+
+                Ok(Self {
+                    inner: EmbeddingInner::Rig(Box::new(RigModelWrapper {
+                        model,
+                        model_name,
+                    })),
+                    provider: "ollama",
+                    dimensions: dims,
+                })
             }
+
             "gemini" => {
-                let api_key = resolve_api_key(config, "GEMINI_API_KEY")?;
-                let model = if config.model == "hash-128d" {
-                    None
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "GEMINI_API_KEY",
+                    "gemini",
+                    "embedding",
+                )?;
+
+                let model_name = if config.model == "hash-128d" {
+                    "text-embedding-004".to_string()
                 } else {
-                    Some(config.model.clone())
+                    config.model.clone()
                 };
-                Ok(Self::Gemini(GeminiEmbeddingProvider::with_config(
-                    api_key,
-                    model,
-                    config.dimensions,
-                    config.base_url.clone(),
-                )))
+
+                let dims = config.dimensions.unwrap_or(768);
+
+                let mut builder =
+                    rig::providers::gemini::Client::<reqwest::Client>::builder()
+                        .api_key(&api_key);
+
+                if let Some(ref base_url) = config.base_url {
+                    builder = builder.base_url(base_url);
+                }
+
+                let client = builder.build().map_err(|e| {
+                    ShabkaError::Embedding(format!("failed to build Gemini client: {e}"))
+                })?;
+
+                use rig::prelude::EmbeddingsClient;
+                let model = client.embedding_model_with_ndims(&model_name, dims);
+
+                Ok(Self {
+                    inner: EmbeddingInner::Rig(Box::new(RigModelWrapper {
+                        model,
+                        model_name,
+                    })),
+                    provider: "gemini",
+                    dimensions: dims,
+                })
             }
-            "hash" => Ok(Self::Hash(HashEmbeddingProvider::new())),
+
+            "hash" => Ok(Self {
+                inner: EmbeddingInner::Hash(HashEmbeddingProvider::new()),
+                provider: "hash",
+                dimensions: 128,
+            }),
+
             other => Err(ShabkaError::Config(format!(
                 "unknown embedding provider: '{other}' \
                  (expected 'openai', 'ollama', 'gemini', or 'hash')"
@@ -135,19 +226,23 @@ impl EmbeddingService {
 
     /// Whether this provider makes remote API calls (and should use retry logic).
     fn is_remote(&self) -> bool {
-        match self {
-            Self::OpenAI(_) | Self::Ollama(_) => true,
-            Self::Gemini(_) => true,
-            Self::Hash(_) => false,
-        }
+        matches!(self.inner, EmbeddingInner::Rig(_))
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         if self.is_remote() {
             return with_retry(3, 200, || async {
-                match self {
-                    Self::OpenAI(p) | Self::Ollama(p) => p.embed(text).await,
-                    Self::Gemini(p) => p.embed(text).await,
+                match &self.inner {
+                    EmbeddingInner::Rig(adapter) => {
+                        let vecs = adapter
+                            .embed_texts(vec![text.to_string()])
+                            .await
+                            .map_err(ShabkaError::Embedding)?;
+                        vecs.into_iter()
+                            .next()
+                            .map(|v| v.into_iter().map(|x| x as f32).collect())
+                            .ok_or_else(|| ShabkaError::Embedding("empty embedding result".into()))
+                    }
                     _ => Err(ShabkaError::Embedding(
                         "unexpected non-remote variant in remote embed path".into(),
                     )),
@@ -155,8 +250,8 @@ impl EmbeddingService {
             })
             .await;
         }
-        match self {
-            Self::Hash(p) => p.embed(text).await,
+        match &self.inner {
+            EmbeddingInner::Hash(p) => p.embed(text).await,
             _ => Err(ShabkaError::Embedding(
                 "unexpected non-local variant in local embed path".into(),
             )),
@@ -166,9 +261,18 @@ impl EmbeddingService {
     pub async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         if self.is_remote() {
             return with_retry(3, 200, || async {
-                match self {
-                    Self::OpenAI(p) | Self::Ollama(p) => p.embed_batch(texts).await,
-                    Self::Gemini(p) => p.embed_batch(texts).await,
+                match &self.inner {
+                    EmbeddingInner::Rig(adapter) => {
+                        let owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+                        let vecs = adapter
+                            .embed_texts(owned)
+                            .await
+                            .map_err(ShabkaError::Embedding)?;
+                        Ok(vecs
+                            .into_iter()
+                            .map(|v| v.into_iter().map(|x| x as f32).collect())
+                            .collect())
+                    }
                     _ => Err(ShabkaError::Embedding(
                         "unexpected non-remote variant in remote embed path".into(),
                     )),
@@ -176,8 +280,8 @@ impl EmbeddingService {
             })
             .await;
         }
-        match self {
-            Self::Hash(p) => p.embed_batch(texts).await,
+        match &self.inner {
+            EmbeddingInner::Hash(p) => p.embed_batch(texts).await,
             _ => Err(ShabkaError::Embedding(
                 "unexpected non-local variant in local embed path".into(),
             )),
@@ -185,29 +289,19 @@ impl EmbeddingService {
     }
 
     pub fn dimensions(&self) -> usize {
-        match self {
-            Self::OpenAI(p) | Self::Ollama(p) => p.dimensions(),
-            Self::Gemini(p) => p.dimensions(),
-            Self::Hash(p) => p.dimensions(),
-        }
+        self.dimensions
     }
 
     pub fn model_id(&self) -> &str {
-        match self {
-            Self::OpenAI(p) | Self::Ollama(p) => p.model_id(),
-            Self::Gemini(p) => p.model_id(),
-            Self::Hash(p) => p.model_id(),
+        match &self.inner {
+            EmbeddingInner::Rig(adapter) => adapter.model_id(),
+            EmbeddingInner::Hash(p) => p.model_id(),
         }
     }
 
     /// Provider name for display purposes.
     pub fn provider_name(&self) -> &str {
-        match self {
-            Self::OpenAI(_) => "openai",
-            Self::Ollama(_) => "ollama",
-            Self::Gemini(_) => "gemini",
-            Self::Hash(_) => "hash",
-        }
+        self.provider
     }
 }
 
@@ -347,31 +441,47 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_api_key_from_config() {
+    fn test_hash_provider() {
         let config = EmbeddingConfig {
-            provider: "openai".to_string(),
-            model: "test".to_string(),
-            api_key: Some("config-key".to_string()),
+            provider: "hash".to_string(),
+            model: "hash-128d".to_string(),
+            api_key: None,
             base_url: None,
             dimensions: None,
             env_var: None,
         };
-        let key = resolve_api_key(&config, "OPENAI_API_KEY").unwrap();
+        let result = EmbeddingService::from_config(&config);
+        assert!(result.is_ok());
+        let service = result.unwrap();
+        assert_eq!(service.dimensions(), 128);
+        assert_eq!(service.model_id(), "hash-128d");
+        assert_eq!(service.provider_name(), "hash");
+    }
+
+    #[test]
+    fn test_resolve_api_key_from_config() {
+        let key = config::resolve_api_key(
+            Some("config-key"),
+            None,
+            "OPENAI_API_KEY",
+            "openai",
+            "embedding",
+        )
+        .unwrap();
         assert_eq!(key, "config-key");
     }
 
     #[test]
     fn test_resolve_api_key_custom_env_var() {
         std::env::set_var("MY_CUSTOM_KEY", "env-key");
-        let config = EmbeddingConfig {
-            provider: "openai".to_string(),
-            model: "test".to_string(),
-            api_key: None,
-            base_url: None,
-            dimensions: None,
-            env_var: Some("MY_CUSTOM_KEY".to_string()),
-        };
-        let key = resolve_api_key(&config, "OPENAI_API_KEY").unwrap();
+        let key = config::resolve_api_key(
+            None,
+            Some("MY_CUSTOM_KEY"),
+            "OPENAI_API_KEY",
+            "openai",
+            "embedding",
+        )
+        .unwrap();
         assert_eq!(key, "env-key");
         std::env::remove_var("MY_CUSTOM_KEY");
     }
