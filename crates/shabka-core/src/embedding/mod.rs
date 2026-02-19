@@ -1,16 +1,10 @@
 mod provider;
 
-#[cfg(feature = "embed-local")]
-mod local;
-
 mod gemini;
 mod hash;
 mod openai;
 
 pub use provider::EmbeddingProvider;
-
-#[cfg(feature = "embed-local")]
-pub use local::LocalEmbeddingProvider;
 
 pub use gemini::GeminiEmbeddingProvider;
 pub use hash::HashEmbeddingProvider;
@@ -23,8 +17,6 @@ use crate::retry::with_retry;
 /// Concrete embedding service that dispatches to the configured provider.
 /// Uses an enum instead of `dyn EmbeddingProvider` because the trait uses RPITIT.
 pub enum EmbeddingService {
-    #[cfg(feature = "embed-local")]
-    Local(LocalEmbeddingProvider),
     OpenAI(OpenAIEmbeddingProvider),
     /// Ollama uses OpenAI-compatible API but needs a distinct variant for display.
     Ollama(OpenAIEmbeddingProvider),
@@ -35,8 +27,6 @@ pub enum EmbeddingService {
 impl std::fmt::Debug for EmbeddingService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(feature = "embed-local")]
-            Self::Local(_) => f.debug_tuple("Local").finish(),
             Self::OpenAI(_) => f.debug_tuple("OpenAI").finish(),
             Self::Ollama(_) => f.debug_tuple("Ollama").finish(),
             Self::Gemini(_) => f.debug_tuple("Gemini").finish(),
@@ -68,14 +58,8 @@ impl EmbeddingService {
     /// Create an embedding service from configuration.
     pub fn from_config(config: &EmbeddingConfig) -> Result<Self> {
         match config.provider.as_str() {
-            #[cfg(feature = "embed-local")]
-            "local" => {
-                let provider = LocalEmbeddingProvider::new()?;
-                Ok(Self::Local(provider))
-            }
-            #[cfg(not(feature = "embed-local"))]
             "local" => Err(ShabkaError::Config(
-                "local embedding provider requires the 'embed-local' feature".into(),
+                "local embedding provider has been removed; use 'ollama', 'openai', 'gemini', or 'hash'".into(),
             )),
             "openai" => {
                 let api_key = resolve_api_key(config, "OPENAI_API_KEY")?;
@@ -144,7 +128,7 @@ impl EmbeddingService {
             "hash" => Ok(Self::Hash(HashEmbeddingProvider::new())),
             other => Err(ShabkaError::Config(format!(
                 "unknown embedding provider: '{other}' \
-                 (expected 'local', 'openai', 'ollama', 'gemini', or 'hash')"
+                 (expected 'openai', 'ollama', 'gemini', or 'hash')"
             ))),
         }
     }
@@ -152,8 +136,6 @@ impl EmbeddingService {
     /// Whether this provider makes remote API calls (and should use retry logic).
     fn is_remote(&self) -> bool {
         match self {
-            #[cfg(feature = "embed-local")]
-            Self::Local(_) => false,
             Self::OpenAI(_) | Self::Ollama(_) => true,
             Self::Gemini(_) => true,
             Self::Hash(_) => false,
@@ -174,8 +156,6 @@ impl EmbeddingService {
             .await;
         }
         match self {
-            #[cfg(feature = "embed-local")]
-            Self::Local(p) => p.embed(text).await,
             Self::Hash(p) => p.embed(text).await,
             _ => Err(ShabkaError::Embedding(
                 "unexpected non-local variant in local embed path".into(),
@@ -197,8 +177,6 @@ impl EmbeddingService {
             .await;
         }
         match self {
-            #[cfg(feature = "embed-local")]
-            Self::Local(p) => p.embed_batch(texts).await,
             Self::Hash(p) => p.embed_batch(texts).await,
             _ => Err(ShabkaError::Embedding(
                 "unexpected non-local variant in local embed path".into(),
@@ -208,8 +186,6 @@ impl EmbeddingService {
 
     pub fn dimensions(&self) -> usize {
         match self {
-            #[cfg(feature = "embed-local")]
-            Self::Local(p) => p.dimensions(),
             Self::OpenAI(p) | Self::Ollama(p) => p.dimensions(),
             Self::Gemini(p) => p.dimensions(),
             Self::Hash(p) => p.dimensions(),
@@ -218,8 +194,6 @@ impl EmbeddingService {
 
     pub fn model_id(&self) -> &str {
         match self {
-            #[cfg(feature = "embed-local")]
-            Self::Local(p) => p.model_id(),
             Self::OpenAI(p) | Self::Ollama(p) => p.model_id(),
             Self::Gemini(p) => p.model_id(),
             Self::Hash(p) => p.model_id(),
@@ -229,8 +203,6 @@ impl EmbeddingService {
     /// Provider name for display purposes.
     pub fn provider_name(&self) -> &str {
         match self {
-            #[cfg(feature = "embed-local")]
-            Self::Local(_) => "local",
             Self::OpenAI(_) => "openai",
             Self::Ollama(_) => "ollama",
             Self::Gemini(_) => "gemini",
@@ -285,9 +257,8 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "embed-local"))]
     #[test]
-    fn test_local_without_feature_errors() {
+    fn test_local_provider_removed() {
         let config = EmbeddingConfig {
             provider: "local".to_string(),
             model: "bge-small-en-v1.5".to_string(),
@@ -299,7 +270,7 @@ mod tests {
         let result = EmbeddingService::from_config(&config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("embed-local"));
+        assert!(err.contains("removed"));
     }
 
     #[test]
