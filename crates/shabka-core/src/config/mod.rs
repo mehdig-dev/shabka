@@ -399,7 +399,7 @@ fn default_llm_max_tokens() -> usize {
 }
 
 /// Valid embedding provider names.
-pub const VALID_PROVIDERS: &[&str] = &["hash", "ollama", "openai", "gemini", "local"];
+pub const VALID_PROVIDERS: &[&str] = &["hash", "ollama", "openai", "gemini"];
 
 impl ShabkaConfig {
     /// Load configuration with three-layer TOML merge:
@@ -1021,7 +1021,6 @@ last_updated = "2025-06-01T00:00:00Z"
         assert!(VALID_PROVIDERS.contains(&"ollama"));
         assert!(VALID_PROVIDERS.contains(&"openai"));
         assert!(VALID_PROVIDERS.contains(&"gemini"));
-        assert!(VALID_PROVIDERS.contains(&"local"));
     }
 
     // -- LlmConfig tests --
