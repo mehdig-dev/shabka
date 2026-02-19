@@ -17,6 +17,9 @@ pub enum ShabkaError {
     #[error("Embedding error: {0}")]
     Embedding(String),
 
+    #[error("LLM error: {0}")]
+    Llm(String),
+
     #[error("Configuration error: {0}")]
     Config(String),
 
@@ -35,7 +38,7 @@ impl ShabkaError {
             // reqwest errors are almost always network-level / transient
             Self::Http(_) => true,
             // Check embedded error messages for transient HTTP status codes
-            Self::Embedding(msg) | Self::Storage(msg) => is_transient_message(msg),
+            Self::Embedding(msg) | Self::Storage(msg) | Self::Llm(msg) => is_transient_message(msg),
             _ => false,
         }
     }
@@ -106,6 +109,24 @@ mod tests {
     #[test]
     fn test_permanent_not_found() {
         let err = ShabkaError::NotFound("memory xyz".into());
+        assert!(!err.is_transient());
+    }
+
+    #[test]
+    fn test_llm_error_display() {
+        let err = ShabkaError::Llm("model not found".into());
+        assert_eq!(err.to_string(), "LLM error: model not found");
+    }
+
+    #[test]
+    fn test_llm_transient_503() {
+        let err = ShabkaError::Llm("API error 503: service unavailable".into());
+        assert!(err.is_transient());
+    }
+
+    #[test]
+    fn test_llm_permanent_401() {
+        let err = ShabkaError::Llm("API error 401: unauthorized".into());
         assert!(!err.is_transient());
     }
 }

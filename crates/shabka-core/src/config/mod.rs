@@ -692,6 +692,31 @@ pub fn check_dimensions(config: &EmbeddingConfig) -> std::result::Result<(), Str
     }
 }
 
+/// Resolve an API key: check config field first, then environment variable.
+/// Used by both embedding and LLM service initialization.
+pub fn resolve_api_key(
+    api_key: Option<&str>,
+    env_var_override: Option<&str>,
+    default_env_var: &str,
+    provider_name: &str,
+    service_kind: &str,
+) -> crate::error::Result<String> {
+    if let Some(key) = api_key {
+        if !key.is_empty() {
+            return Ok(key.to_string());
+        }
+    }
+
+    let env_var_name = env_var_override.unwrap_or(default_env_var);
+
+    std::env::var(env_var_name).map_err(|_| {
+        crate::error::ShabkaError::Config(format!(
+            "{provider_name} {service_kind} provider requires an API key \
+             (set {service_kind}.api_key or {env_var_name})"
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
