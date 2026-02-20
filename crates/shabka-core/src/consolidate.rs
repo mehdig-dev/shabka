@@ -16,6 +16,27 @@ use crate::llm::LlmService;
 use crate::model::*;
 use crate::storage::StorageBackend;
 
+/// Raw JSON response from the LLM for consolidation.
+#[derive(Deserialize, Debug)]
+struct ConsolidateLlmResponse {
+    title: String,
+    content: String,
+    #[serde(default = "default_kind")]
+    kind: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default = "default_importance")]
+    importance: f64,
+}
+
+fn default_kind() -> String {
+    "observation".to_string()
+}
+
+fn default_importance() -> f64 {
+    0.5
+}
+
 /// Configuration for memory consolidation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsolidateConfig {
@@ -191,51 +212,22 @@ pub async fn consolidate_cluster(
     }
     prompt.push_str("Merge these into a single comprehensive memory.");
 
-    let response = llm
-        .generate(&prompt, Some(CONSOLIDATE_SYSTEM_PROMPT))
+    let response: ConsolidateLlmResponse = llm
+        .generate_structured(&prompt, Some(CONSOLIDATE_SYSTEM_PROMPT))
         .await
         .map_err(|e| format!("LLM call failed: {e}"))?;
 
-    parse_consolidated_response(&response)
-}
-
-/// Parse the LLM's JSON response into a ConsolidatedMemory.
-pub fn parse_consolidated_response(
-    response: &str,
-) -> std::result::Result<ConsolidatedMemory, String> {
-    let cleaned = response
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-
-    let json: serde_json::Value =
-        serde_json::from_str(cleaned).map_err(|e| format!("invalid JSON: {e}"))?;
-
-    let title = json["title"].as_str().ok_or("missing 'title'")?.to_string();
-    let content = json["content"]
-        .as_str()
-        .ok_or("missing 'content'")?
-        .to_string();
-    let kind_str = json["kind"].as_str().unwrap_or("observation");
-    let kind: MemoryKind = kind_str.parse().unwrap_or(MemoryKind::Observation);
-    let tags: Vec<String> = json["tags"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let importance = json["importance"]
-        .as_f64()
-        .map(|v| (v as f32).clamp(0.0, 1.0))
-        .unwrap_or(0.5);
+    let kind: MemoryKind = response.kind.parse().unwrap_or(MemoryKind::Observation);
+    let tags: Vec<String> = response
+        .tags
+        .into_iter()
+        .map(|t| t.to_lowercase())
+        .collect();
+    let importance = (response.importance as f32).clamp(0.0, 1.0);
 
     Ok(ConsolidatedMemory {
-        title,
-        content,
+        title: response.title,
+        content: response.content,
         kind,
         tags,
         importance,
@@ -353,6 +345,32 @@ pub async fn consolidate(
 mod tests {
     use super::*;
 
+    /// Test helper: deserialize JSON (with optional markdown fences) into ConsolidatedMemory.
+    fn parse_response(raw: &str) -> std::result::Result<ConsolidatedMemory, String> {
+        let cleaned = raw
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        let response: ConsolidateLlmResponse =
+            serde_json::from_str(cleaned).map_err(|e| format!("invalid JSON: {e}"))?;
+        let kind: MemoryKind = response.kind.parse().unwrap_or(MemoryKind::Observation);
+        let tags: Vec<String> = response
+            .tags
+            .into_iter()
+            .map(|t| t.to_lowercase())
+            .collect();
+        let importance = (response.importance as f32).clamp(0.0, 1.0);
+        Ok(ConsolidatedMemory {
+            title: response.title,
+            content: response.content,
+            kind,
+            tags,
+            importance,
+        })
+    }
+
     #[test]
     fn test_consolidate_config_defaults() {
         let config = ConsolidateConfig::default();
@@ -365,7 +383,7 @@ mod tests {
     #[test]
     fn test_parse_consolidated_response_valid() {
         let response = r#"{"title":"Combined knowledge","content":"Full details","kind":"pattern","tags":["rust","config"],"importance":0.8}"#;
-        let result = parse_consolidated_response(response).unwrap();
+        let result = parse_response(response).unwrap();
         assert_eq!(result.title, "Combined knowledge");
         assert_eq!(result.content, "Full details");
         assert_eq!(result.kind, MemoryKind::Pattern);
@@ -376,28 +394,28 @@ mod tests {
     #[test]
     fn test_parse_consolidated_response_with_fences() {
         let response = "```json\n{\"title\":\"Test\",\"content\":\"Body\",\"kind\":\"fact\"}\n```";
-        let result = parse_consolidated_response(response).unwrap();
+        let result = parse_response(response).unwrap();
         assert_eq!(result.title, "Test");
         assert_eq!(result.kind, MemoryKind::Fact);
     }
 
     #[test]
     fn test_parse_consolidated_response_invalid_json() {
-        let result = parse_consolidated_response("not json");
+        let result = parse_response("not json");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_consolidated_response_missing_title() {
         let response = r#"{"content":"body","kind":"fact"}"#;
-        let result = parse_consolidated_response(response);
+        let result = parse_response(response);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_consolidated_response_defaults() {
         let response = r#"{"title":"Test","content":"Body"}"#;
-        let result = parse_consolidated_response(response).unwrap();
+        let result = parse_response(response).unwrap();
         assert_eq!(result.kind, MemoryKind::Observation);
         assert!(result.tags.is_empty());
         assert!((result.importance - 0.5).abs() < f32::EPSILON);
