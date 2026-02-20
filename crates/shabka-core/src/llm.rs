@@ -669,4 +669,24 @@ mod tests {
         let result: Resp = serde_json::from_str(cleaned).unwrap();
         assert!(result.ok);
     }
+
+    #[test]
+    fn test_generate_structured_parse_nested_content() {
+        #[derive(serde::Deserialize, Debug)]
+        struct CodeResp {
+            language: String,
+            snippet: String,
+        }
+
+        let raw = "```json\n{\"language\":\"rust\",\"snippet\":\"fn main() {}\"}\n```";
+        let cleaned = raw
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        let result: CodeResp = serde_json::from_str(cleaned).unwrap();
+        assert_eq!(result.language, "rust");
+        assert_eq!(result.snippet, "fn main() {}");
+    }
 }

@@ -181,4 +181,59 @@ mod tests {
         assert!(output.contains("0 memories"));
         assert!(!output.contains("---"));
     }
+
+    #[test]
+    fn test_build_context_pack_exact_budget_boundary() {
+        let m1 = test_memory("First", "short");
+        let cost1 = crate::tokens::estimate_memory_tokens(&m1);
+        let m2 = test_memory("Second", "also short");
+        let pack = build_context_pack(vec![m1, m2], cost1, None);
+        assert_eq!(pack.memories.len(), 1);
+        assert_eq!(pack.total_tokens, cost1);
+        assert_eq!(pack.memories[0].title, "First");
+    }
+
+    #[test]
+    fn test_build_context_pack_preserves_order() {
+        let memories = vec![
+            test_memory("A", "first"),
+            test_memory("B", "second"),
+            test_memory("C", "third"),
+        ];
+        let pack = build_context_pack(memories, 10000, None);
+        assert_eq!(pack.memories.len(), 3);
+        assert_eq!(pack.memories[0].title, "A");
+        assert_eq!(pack.memories[1].title, "B");
+        assert_eq!(pack.memories[2].title, "C");
+    }
+
+    #[test]
+    fn test_format_context_pack_includes_kind_and_tags() {
+        let m = Memory::new(
+            "Error handling".to_string(),
+            "Use Result everywhere".to_string(),
+            MemoryKind::Pattern,
+            "test".to_string(),
+        )
+        .with_tags(vec!["rust".to_string(), "error".to_string()]);
+        let pack = build_context_pack(vec![m], 10000, None);
+        let output = format_context_pack(&pack);
+        assert!(output.contains("[pattern]"));
+        assert!(output.contains("tags: rust, error"));
+    }
+
+    #[test]
+    fn test_format_context_pack_no_tags() {
+        let mut m = Memory::new(
+            "No tags".to_string(),
+            "Content".to_string(),
+            MemoryKind::Observation,
+            "test".to_string(),
+        );
+        m.tags = vec![];
+        let pack = build_context_pack(vec![m], 10000, None);
+        let output = format_context_pack(&pack);
+        assert!(output.contains("[observation]"));
+        assert!(!output.contains("tags:"));
+    }
 }
