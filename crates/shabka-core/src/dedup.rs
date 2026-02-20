@@ -10,12 +10,23 @@
 //! - Send new + existing memories to LLM for ADD/UPDATE/SKIP decision
 //! - Falls back to threshold-based on LLM failure
 
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::config::GraphConfig;
 use crate::llm::LlmService;
 use crate::model::Memory;
 use crate::storage::StorageBackend;
+
+/// Raw JSON response from the LLM for dedup decisions.
+#[derive(Deserialize, Debug)]
+struct DedupLlmResponse {
+    decision: String,
+    target_id: Option<serde_json::Value>,
+    merged_title: Option<String>,
+    merged_content: Option<String>,
+    reason: Option<String>,
+}
 
 /// The result of a duplicate check.
 #[derive(Debug, Clone)]
@@ -173,12 +184,12 @@ async fn check_duplicate_with_llm(
 ) -> std::result::Result<DedupDecision, String> {
     let (prompt, id_mapping) = build_dedup_prompt(new_title, new_content, candidates);
 
-    let response = llm
-        .generate(&prompt, Some(DEDUP_SYSTEM_PROMPT))
+    let response: DedupLlmResponse = llm
+        .generate_structured(&prompt, Some(DEDUP_SYSTEM_PROMPT))
         .await
         .map_err(|e| format!("LLM call failed: {e}"))?;
 
-    parse_llm_response(&response, &id_mapping)
+    map_dedup_response(response, &id_mapping)
 }
 
 /// Build the user prompt with temp ID mapping (like mem0).
@@ -210,32 +221,18 @@ pub(crate) fn build_dedup_prompt(
     (prompt, id_mapping)
 }
 
-/// Parse the LLM's JSON response and map temp IDs back to real UUIDs.
-pub(crate) fn parse_llm_response(
-    response: &str,
+/// Map the typed LLM response to a DedupDecision, resolving temp IDs.
+fn map_dedup_response(
+    response: DedupLlmResponse,
     id_mapping: &[(Uuid, String, f32)],
 ) -> std::result::Result<DedupDecision, String> {
-    // Strip markdown fences if present
-    let cleaned = response
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-
-    let json: serde_json::Value =
-        serde_json::from_str(cleaned).map_err(|e| format!("invalid JSON from LLM: {e}"))?;
-
-    let decision = json["decision"]
-        .as_str()
-        .ok_or("missing 'decision' field")?
-        .to_uppercase();
+    let decision = response.decision.to_uppercase();
 
     match decision.as_str() {
         "ADD" => Ok(DedupDecision::Add),
         "SKIP" => {
-            let target_idx = resolve_target_id(&json, id_mapping)?;
-            let (id, title, sim) = &id_mapping[target_idx];
+            let idx = resolve_target_id_from_value(&response.target_id, id_mapping)?;
+            let (id, title, sim) = &id_mapping[idx];
             Ok(DedupDecision::Skip {
                 existing_id: *id,
                 existing_title: title.clone(),
@@ -243,13 +240,12 @@ pub(crate) fn parse_llm_response(
             })
         }
         "UPDATE" => {
-            let target_idx = resolve_target_id(&json, id_mapping)?;
-            let (id, title, sim) = &id_mapping[target_idx];
-            let merged_title = json["merged_title"].as_str().unwrap_or(title).to_string();
-            let merged_content = json["merged_content"]
-                .as_str()
-                .ok_or("UPDATE decision missing 'merged_content'")?
-                .to_string();
+            let idx = resolve_target_id_from_value(&response.target_id, id_mapping)?;
+            let (id, title, sim) = &id_mapping[idx];
+            let merged_title = response.merged_title.unwrap_or_else(|| title.clone());
+            let merged_content = response
+                .merged_content
+                .ok_or("UPDATE decision missing 'merged_content'")?;
             Ok(DedupDecision::Update {
                 existing_id: *id,
                 existing_title: title.clone(),
@@ -259,12 +255,11 @@ pub(crate) fn parse_llm_response(
             })
         }
         "CONTRADICT" => {
-            let target_idx = resolve_target_id(&json, id_mapping)?;
-            let (id, title, sim) = &id_mapping[target_idx];
-            let reason = json["reason"]
-                .as_str()
-                .unwrap_or("contradicts existing memory")
-                .to_string();
+            let idx = resolve_target_id_from_value(&response.target_id, id_mapping)?;
+            let (id, title, sim) = &id_mapping[idx];
+            let reason = response
+                .reason
+                .unwrap_or_else(|| "contradicts existing memory".to_string());
             Ok(DedupDecision::Contradict {
                 existing_id: *id,
                 existing_title: title.clone(),
@@ -276,25 +271,20 @@ pub(crate) fn parse_llm_response(
     }
 }
 
-/// Resolve the target_id from the LLM response to an index in the id_mapping.
-fn resolve_target_id(
-    json: &serde_json::Value,
+/// Resolve target_id from a JSON value (string "0" or number 0) to an index.
+fn resolve_target_id_from_value(
+    target_id: &Option<serde_json::Value>,
     id_mapping: &[(Uuid, String, f32)],
 ) -> std::result::Result<usize, String> {
-    let target = json["target_id"]
-        .as_str()
-        .or_else(|| json["target_id"].as_u64().map(|_| ""))
-        .ok_or("missing 'target_id' field")?;
+    let value = target_id.as_ref().ok_or("missing 'target_id' field")?;
 
-    // Try parsing as integer string first, then as the raw u64
-    let idx: usize = if target.is_empty() {
-        json["target_id"]
-            .as_u64()
-            .ok_or("target_id is not a valid integer")? as usize
+    let idx: usize = if let Some(s) = value.as_str() {
+        s.parse()
+            .map_err(|_| format!("target_id '{s}' is not a valid integer"))?
+    } else if let Some(n) = value.as_u64() {
+        n as usize
     } else {
-        target
-            .parse()
-            .map_err(|_| format!("target_id '{target}' is not a valid integer"))?
+        return Err("target_id is not a valid integer".to_string());
     };
 
     if idx >= id_mapping.len() {
@@ -588,8 +578,14 @@ mod tests {
     fn test_parse_llm_response_add() {
         let id = Uuid::nil();
         let mapping = vec![(id, "existing".to_string(), 0.80)];
-        let response = r#"{"decision":"ADD","target_id":null,"merged_title":null,"merged_content":null,"reason":"different topic"}"#;
-        let result = parse_llm_response(response, &mapping).unwrap();
+        let response = DedupLlmResponse {
+            decision: "ADD".into(),
+            target_id: None,
+            merged_title: None,
+            merged_content: None,
+            reason: Some("different topic".into()),
+        };
+        let result = map_dedup_response(response, &mapping).unwrap();
         assert!(matches!(result, DedupDecision::Add));
     }
 
@@ -597,8 +593,14 @@ mod tests {
     fn test_parse_llm_response_skip() {
         let id = Uuid::nil();
         let mapping = vec![(id, "existing memory".to_string(), 0.85)];
-        let response = r#"{"decision":"SKIP","target_id":"0","merged_title":null,"merged_content":null,"reason":"already covered"}"#;
-        let result = parse_llm_response(response, &mapping).unwrap();
+        let response = DedupLlmResponse {
+            decision: "SKIP".into(),
+            target_id: Some(serde_json::json!(0)),
+            merged_title: None,
+            merged_content: None,
+            reason: Some("already covered".into()),
+        };
+        let result = map_dedup_response(response, &mapping).unwrap();
         match result {
             DedupDecision::Skip {
                 existing_id,
@@ -616,8 +618,14 @@ mod tests {
     fn test_parse_llm_response_update() {
         let id = Uuid::nil();
         let mapping = vec![(id, "old title".to_string(), 0.82)];
-        let response = r#"{"decision":"UPDATE","target_id":"0","merged_title":"combined title","merged_content":"merged details from both","reason":"adds details"}"#;
-        let result = parse_llm_response(response, &mapping).unwrap();
+        let response = DedupLlmResponse {
+            decision: "UPDATE".into(),
+            target_id: Some(serde_json::json!("0")),
+            merged_title: Some("combined title".into()),
+            merged_content: Some("merged details from both".into()),
+            reason: Some("adds details".into()),
+        };
+        let result = map_dedup_response(response, &mapping).unwrap();
         match result {
             DedupDecision::Update {
                 existing_id,
@@ -634,27 +642,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_llm_response_strips_markdown_fences() {
-        let id = Uuid::nil();
-        let mapping = vec![(id, "existing".to_string(), 0.80)];
-        let response = "```json\n{\"decision\":\"ADD\",\"target_id\":null,\"merged_title\":null,\"merged_content\":null,\"reason\":\"new\"}\n```";
-        let result = parse_llm_response(response, &mapping).unwrap();
-        assert!(matches!(result, DedupDecision::Add));
-    }
-
-    #[test]
-    fn test_parse_llm_response_invalid_json() {
-        let mapping = vec![(Uuid::nil(), "x".to_string(), 0.8)];
-        let result = parse_llm_response("not json", &mapping);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid JSON"));
-    }
-
-    #[test]
     fn test_parse_llm_response_target_id_out_of_range() {
         let mapping = vec![(Uuid::nil(), "x".to_string(), 0.8)];
-        let response = r#"{"decision":"SKIP","target_id":"5","reason":"covered"}"#;
-        let result = parse_llm_response(response, &mapping);
+        let result = resolve_target_id_from_value(&Some(serde_json::json!("5")), &mapping);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("out of range"));
     }
@@ -664,16 +654,33 @@ mod tests {
         let id = Uuid::nil();
         let mapping = vec![(id, "existing".to_string(), 0.80)];
         // Some LLMs return target_id as number instead of string
-        let response = r#"{"decision":"SKIP","target_id":0,"reason":"covered"}"#;
-        let result = parse_llm_response(response, &mapping).unwrap();
+        let response = DedupLlmResponse {
+            decision: "SKIP".into(),
+            target_id: Some(serde_json::json!(0)),
+            merged_title: None,
+            merged_content: None,
+            reason: Some("covered".into()),
+        };
+        let result = map_dedup_response(response, &mapping).unwrap();
         assert!(matches!(result, DedupDecision::Skip { .. }));
+
+        // Also verify string "0" works
+        let result2 =
+            resolve_target_id_from_value(&Some(serde_json::json!("0")), &mapping).unwrap();
+        assert_eq!(result2, 0);
     }
 
     #[test]
     fn test_parse_llm_response_unknown_decision() {
         let mapping = vec![(Uuid::nil(), "x".to_string(), 0.8)];
-        let response = r#"{"decision":"DELETE","target_id":"0","reason":"remove"}"#;
-        let result = parse_llm_response(response, &mapping);
+        let response = DedupLlmResponse {
+            decision: "DELETE".into(),
+            target_id: Some(serde_json::json!("0")),
+            merged_title: None,
+            merged_content: None,
+            reason: Some("remove".into()),
+        };
+        let result = map_dedup_response(response, &mapping);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown decision"));
     }
@@ -705,8 +712,14 @@ mod tests {
     fn test_parse_llm_response_contradict() {
         let id = Uuid::nil();
         let mapping = vec![(id, "use library X".to_string(), 0.80)];
-        let response = r#"{"decision":"CONTRADICT","target_id":"0","merged_title":null,"merged_content":null,"reason":"new memory says avoid library X"}"#;
-        let result = parse_llm_response(response, &mapping).unwrap();
+        let response = DedupLlmResponse {
+            decision: "CONTRADICT".into(),
+            target_id: Some(serde_json::json!("0")),
+            merged_title: None,
+            merged_content: None,
+            reason: Some("new memory says avoid library X".into()),
+        };
+        let result = map_dedup_response(response, &mapping).unwrap();
         match result {
             DedupDecision::Contradict {
                 existing_id,
