@@ -3,6 +3,8 @@
 //! When enabled (`capture.auto_tag = true` and `llm.enabled = true`),
 //! newly captured memories are sent to the LLM for tag and importance suggestions.
 
+use serde::Deserialize;
+
 use crate::llm::LlmService;
 use crate::model::Memory;
 
@@ -11,6 +13,19 @@ use crate::model::Memory;
 pub struct AutoTagResult {
     pub tags: Vec<String>,
     pub importance: f32,
+}
+
+/// Raw JSON response from the LLM for auto-tagging.
+#[derive(Deserialize, Debug)]
+struct AutoTagLlmResponse {
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default = "default_importance")]
+    importance: f64,
+}
+
+fn default_importance() -> f64 {
+    0.5
 }
 
 /// System prompt for LLM auto-tagging.
@@ -36,28 +51,15 @@ pub async fn auto_tag(memory: &Memory, llm: &LlmService) -> Option<AutoTagResult
         memory.title, memory.kind, memory.content,
     );
 
-    let response = llm
-        .generate(&prompt, Some(AUTO_TAG_SYSTEM_PROMPT))
+    let response: AutoTagLlmResponse = llm
+        .generate_structured(&prompt, Some(AUTO_TAG_SYSTEM_PROMPT))
         .await
         .ok()?;
-    parse_auto_tag_response(&response)
-}
 
-/// Parse the LLM's JSON response into an AutoTagResult.
-pub fn parse_auto_tag_response(response: &str) -> Option<AutoTagResult> {
-    let cleaned = response
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-
-    let json: serde_json::Value = serde_json::from_str(cleaned).ok()?;
-
-    let tags: Vec<String> = json["tags"]
-        .as_array()?
-        .iter()
-        .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+    let tags: Vec<String> = response
+        .tags
+        .into_iter()
+        .map(|t| t.to_lowercase())
         .filter(|t| !t.is_empty())
         .collect();
 
@@ -65,11 +67,7 @@ pub fn parse_auto_tag_response(response: &str) -> Option<AutoTagResult> {
         return None;
     }
 
-    let importance = json["importance"]
-        .as_f64()
-        .map(|v| (v as f32).clamp(0.0, 1.0))
-        .unwrap_or(0.5);
-
+    let importance = (response.importance as f32).clamp(0.0, 1.0);
     Some(AutoTagResult { tags, importance })
 }
 
@@ -77,10 +75,31 @@ pub fn parse_auto_tag_response(response: &str) -> Option<AutoTagResult> {
 mod tests {
     use super::*;
 
+    fn parse_response(raw: &str) -> Option<AutoTagResult> {
+        let cleaned = raw
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        let response: AutoTagLlmResponse = serde_json::from_str(cleaned).ok()?;
+        let tags: Vec<String> = response
+            .tags
+            .into_iter()
+            .map(|t| t.to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+        if tags.is_empty() {
+            return None;
+        }
+        let importance = (response.importance as f32).clamp(0.0, 1.0);
+        Some(AutoTagResult { tags, importance })
+    }
+
     #[test]
     fn test_parse_auto_tag_valid() {
         let response = r#"{"tags":["rust","helix-db","config"],"importance":0.7}"#;
-        let result = parse_auto_tag_response(response).unwrap();
+        let result = parse_response(response).unwrap();
         assert_eq!(result.tags, vec!["rust", "helix-db", "config"]);
         assert!((result.importance - 0.7).abs() < f32::EPSILON);
     }
@@ -88,34 +107,30 @@ mod tests {
     #[test]
     fn test_parse_auto_tag_with_fences() {
         let response = "```json\n{\"tags\":[\"wsl2\",\"bug-fix\"],\"importance\":0.6}\n```";
-        let result = parse_auto_tag_response(response).unwrap();
+        let result = parse_response(response).unwrap();
         assert_eq!(result.tags, vec!["wsl2", "bug-fix"]);
         assert!((result.importance - 0.6).abs() < f32::EPSILON);
     }
 
     #[test]
     fn test_parse_auto_tag_invalid_json() {
-        let response = "not valid json";
-        assert!(parse_auto_tag_response(response).is_none());
+        assert!(parse_response("not valid json").is_none());
     }
 
     #[test]
     fn test_parse_auto_tag_empty_tags() {
-        let response = r#"{"tags":[],"importance":0.5}"#;
-        assert!(parse_auto_tag_response(response).is_none());
+        assert!(parse_response(r#"{"tags":[],"importance":0.5}"#).is_none());
     }
 
     #[test]
     fn test_parse_auto_tag_clamps_importance() {
-        let response = r#"{"tags":["test"],"importance":1.5}"#;
-        let result = parse_auto_tag_response(response).unwrap();
+        let result = parse_response(r#"{"tags":["test"],"importance":1.5}"#).unwrap();
         assert!((result.importance - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn test_parse_auto_tag_missing_importance_defaults() {
-        let response = r#"{"tags":["test"]}"#;
-        let result = parse_auto_tag_response(response).unwrap();
+        let result = parse_response(r#"{"tags":["test"]}"#).unwrap();
         assert!((result.importance - 0.5).abs() < f32::EPSILON);
     }
 }
