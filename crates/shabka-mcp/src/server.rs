@@ -8,6 +8,7 @@ use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
 use serde::Deserialize;
 use shabka_core::assess::{self, AssessConfig, IssueCounts};
 use shabka_core::config::{self, EmbeddingState, ShabkaConfig};
+use shabka_core::context_pack::{build_context_pack, format_context_pack};
 use shabka_core::dedup::{self, DedupDecision};
 use shabka_core::embedding::EmbeddingService;
 use shabka_core::error::ShabkaError;
@@ -264,6 +265,39 @@ pub struct VerifyMemoryParams {
 
     #[schemars(description = "Verification status: verified, disputed, outdated, or unverified")]
     pub status: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetContextParams {
+    #[schemars(
+        description = "Search query for semantic + keyword matching. Omit or use '*' for top memories by recency/importance."
+    )]
+    #[serde(default = "default_context_query")]
+    pub query: String,
+
+    #[schemars(description = "Filter by project ID (optional)")]
+    #[serde(default)]
+    pub project_id: Option<String>,
+
+    #[schemars(description = "Filter by memory kind (optional)")]
+    #[serde(default)]
+    pub kind: Option<String>,
+
+    #[schemars(description = "Comma-separated tag filter (optional)")]
+    #[serde(default)]
+    pub tags: Option<String>,
+
+    #[schemars(description = "Max tokens in the context pack (default 2000)")]
+    #[serde(default = "default_token_budget")]
+    pub token_budget: usize,
+}
+
+fn default_context_query() -> String {
+    "*".to_string()
+}
+
+fn default_token_budget() -> usize {
+    2000
 }
 
 fn default_history_limit() -> usize {
@@ -1404,6 +1438,105 @@ impl ShabkaServer {
             memory.title
         ))]))
     }
+
+    #[tool(
+        name = "get_context",
+        description = "Get a token-budgeted context pack of relevant memories, formatted as markdown ready for injection into prompts. Supports filtering by query, project, kind, and tags. Use this when you need rich context rather than individual search results."
+    )]
+    async fn get_context(
+        &self,
+        Parameters(params): Parameters<GetContextParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let query = if params.query.is_empty() {
+            "*"
+        } else {
+            &params.query
+        };
+
+        let embedding = self.embedder.embed(query).await.map_err(to_mcp_error)?;
+
+        let mut results = self
+            .storage
+            .vector_search(&embedding, 50)
+            .await
+            .map_err(to_mcp_error)?;
+
+        sharing::filter_search_results(&mut results, &self.user_id);
+
+        let tag_filter: Vec<String> = params
+            .tags
+            .map(|t| {
+                t.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let filtered: Vec<(Memory, f32)> = results
+            .into_iter()
+            .filter(|(memory, _)| {
+                if let Some(ref kind) = params.kind {
+                    if memory.kind.to_string() != *kind {
+                        return false;
+                    }
+                }
+                if let Some(ref pid) = params.project_id {
+                    if memory.project_id.as_ref() != Some(pid) {
+                        return false;
+                    }
+                }
+                if !tag_filter.is_empty() && !tag_filter.iter().any(|t| memory.tags.contains(t)) {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        let memory_ids: Vec<Uuid> = filtered.iter().map(|(m, _)| m.id).collect();
+        let relation_counts = self
+            .storage
+            .count_relations(&memory_ids)
+            .await
+            .map_err(to_mcp_error)?;
+        let count_map: std::collections::HashMap<Uuid, usize> =
+            relation_counts.into_iter().collect();
+        let contradiction_counts = self
+            .storage
+            .count_contradictions(&memory_ids)
+            .await
+            .map_err(to_mcp_error)?;
+        let contradiction_map: std::collections::HashMap<Uuid, usize> =
+            contradiction_counts.into_iter().collect();
+
+        let candidates: Vec<RankCandidate> = filtered
+            .into_iter()
+            .map(|(memory, vector_score)| {
+                let kw_score = ranking::keyword_score(query, &memory);
+                RankCandidate {
+                    relation_count: count_map.get(&memory.id).copied().unwrap_or(0),
+                    contradiction_count: contradiction_map.get(&memory.id).copied().unwrap_or(0),
+                    keyword_score: kw_score,
+                    memory,
+                    vector_score,
+                }
+            })
+            .collect();
+
+        let ranked = ranking::rank(candidates, &RankingWeights::default());
+        let memories: Vec<Memory> = ranked.into_iter().map(|r| r.memory).collect();
+
+        let pack = build_context_pack(memories, params.token_budget, params.project_id);
+
+        if pack.memories.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No memories found matching the query and filters within the token budget.",
+            )]));
+        }
+
+        let formatted = format_context_pack(&pack);
+        Ok(CallToolResult::success(vec![Content::text(formatted)]))
+    }
 }
 
 #[tool_handler]
@@ -1424,6 +1557,7 @@ impl ServerHandler for ShabkaServer {
                  Maintenance: reembed (re-embed memories after provider change).\n\n\
                  Quality: assess (scorecard with issue counts and overall score).\n\n\
                  Trust: verify_memory (set verified/disputed/outdated status — verified memories rank higher).\n\n\
+                 Context: get_context (token-budgeted context pack of relevant memories for prompt injection).\n\n\
                  Always start with search, then drill down as needed."
                     .to_string(),
             ),
