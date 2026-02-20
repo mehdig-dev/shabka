@@ -172,7 +172,16 @@ impl Default for LlmConfig {
 }
 
 /// Valid LLM provider names.
-pub const VALID_LLM_PROVIDERS: &[&str] = &["ollama", "openai", "gemini", "anthropic"];
+pub const VALID_LLM_PROVIDERS: &[&str] = &[
+    "ollama",
+    "openai",
+    "gemini",
+    "anthropic",
+    "deepseek",
+    "groq",
+    "xai",
+    "cohere",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievalConfig {
@@ -399,7 +408,7 @@ fn default_llm_max_tokens() -> usize {
 }
 
 /// Valid embedding provider names.
-pub const VALID_PROVIDERS: &[&str] = &["hash", "ollama", "openai", "gemini"];
+pub const VALID_PROVIDERS: &[&str] = &["hash", "ollama", "openai", "gemini", "cohere"];
 
 impl ShabkaConfig {
     /// Load configuration with three-layer TOML merge:
@@ -1021,6 +1030,19 @@ last_updated = "2025-06-01T00:00:00Z"
         assert!(VALID_PROVIDERS.contains(&"ollama"));
         assert!(VALID_PROVIDERS.contains(&"openai"));
         assert!(VALID_PROVIDERS.contains(&"gemini"));
+        assert!(VALID_PROVIDERS.contains(&"cohere"));
+    }
+
+    #[test]
+    fn test_valid_llm_providers_list() {
+        assert!(VALID_LLM_PROVIDERS.contains(&"ollama"));
+        assert!(VALID_LLM_PROVIDERS.contains(&"openai"));
+        assert!(VALID_LLM_PROVIDERS.contains(&"gemini"));
+        assert!(VALID_LLM_PROVIDERS.contains(&"anthropic"));
+        assert!(VALID_LLM_PROVIDERS.contains(&"deepseek"));
+        assert!(VALID_LLM_PROVIDERS.contains(&"groq"));
+        assert!(VALID_LLM_PROVIDERS.contains(&"xai"));
+        assert!(VALID_LLM_PROVIDERS.contains(&"cohere"));
     }
 
     // -- LlmConfig tests --

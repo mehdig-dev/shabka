@@ -202,9 +202,102 @@ impl LlmService {
                 Box::new(RigCompletionWrapper { model, model_name })
             }
 
+            "deepseek" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "DEEPSEEK_API_KEY",
+                    "deepseek",
+                    "LLM",
+                )?;
+
+                let client = rig::providers::deepseek::Client::<reqwest::Client>::builder()
+                    .api_key(&api_key)
+                    .build()
+                    .map_err(|e| {
+                        ShabkaError::Llm(format!("failed to build DeepSeek LLM client: {e}"))
+                    })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
+            "groq" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "GROQ_API_KEY",
+                    "groq",
+                    "LLM",
+                )?;
+
+                let client = rig::providers::groq::Client::<reqwest::Client>::builder()
+                    .api_key(&api_key)
+                    .build()
+                    .map_err(|e| {
+                        ShabkaError::Llm(format!("failed to build Groq LLM client: {e}"))
+                    })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
+            "xai" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "XAI_API_KEY",
+                    "xai",
+                    "LLM",
+                )?;
+
+                let client = rig::providers::xai::Client::<reqwest::Client>::builder()
+                    .api_key(&api_key)
+                    .build()
+                    .map_err(|e| {
+                        ShabkaError::Llm(format!("failed to build xAI LLM client: {e}"))
+                    })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
+            "cohere" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "COHERE_API_KEY",
+                    "cohere",
+                    "LLM",
+                )?;
+
+                let client = rig::providers::cohere::Client::<reqwest::Client>::builder()
+                    .api_key(&api_key)
+                    .build()
+                    .map_err(|e| {
+                        ShabkaError::Llm(format!("failed to build Cohere LLM client: {e}"))
+                    })?;
+
+                use rig::prelude::CompletionClient;
+                let model = client.completion_model(&config.model);
+                let model_name = config.model.clone();
+
+                Box::new(RigCompletionWrapper { model, model_name })
+            }
+
             other => {
                 return Err(ShabkaError::Config(format!(
-                    "unknown LLM provider: '{other}' (expected 'ollama', 'openai', 'gemini', or 'anthropic')"
+                    "unknown LLM provider: '{other}' (expected 'ollama', 'openai', 'gemini', \
+                     'anthropic', 'deepseek', 'groq', 'xai', or 'cohere')"
                 )));
             }
         };
@@ -375,6 +468,134 @@ mod tests {
             provider: "claude".into(),
             model: "claude-sonnet-4-5-20250929".into(),
             api_key: Some("sk-ant-test".into()),
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_from_config_deepseek_without_key_errors() {
+        let saved = std::env::var("DEEPSEEK_API_KEY").ok();
+        std::env::remove_var("DEEPSEEK_API_KEY");
+
+        let config = LlmConfig {
+            provider: "deepseek".into(),
+            model: "deepseek-chat".into(),
+            api_key: None,
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("API key"));
+
+        if let Some(key) = saved {
+            std::env::set_var("DEEPSEEK_API_KEY", key);
+        }
+    }
+
+    #[test]
+    fn test_from_config_deepseek_with_key() {
+        let config = LlmConfig {
+            provider: "deepseek".into(),
+            model: "deepseek-chat".into(),
+            api_key: Some("sk-test".into()),
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_from_config_groq_without_key_errors() {
+        let saved = std::env::var("GROQ_API_KEY").ok();
+        std::env::remove_var("GROQ_API_KEY");
+
+        let config = LlmConfig {
+            provider: "groq".into(),
+            model: "llama-3.1-70b-versatile".into(),
+            api_key: None,
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("API key"));
+
+        if let Some(key) = saved {
+            std::env::set_var("GROQ_API_KEY", key);
+        }
+    }
+
+    #[test]
+    fn test_from_config_groq_with_key() {
+        let config = LlmConfig {
+            provider: "groq".into(),
+            model: "llama-3.1-70b-versatile".into(),
+            api_key: Some("gsk-test".into()),
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_from_config_xai_without_key_errors() {
+        let saved = std::env::var("XAI_API_KEY").ok();
+        std::env::remove_var("XAI_API_KEY");
+
+        let config = LlmConfig {
+            provider: "xai".into(),
+            model: "grok-2".into(),
+            api_key: None,
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("API key"));
+
+        if let Some(key) = saved {
+            std::env::set_var("XAI_API_KEY", key);
+        }
+    }
+
+    #[test]
+    fn test_from_config_xai_with_key() {
+        let config = LlmConfig {
+            provider: "xai".into(),
+            model: "grok-2".into(),
+            api_key: Some("xai-test".into()),
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_from_config_cohere_without_key_errors() {
+        let saved = std::env::var("COHERE_API_KEY").ok();
+        std::env::remove_var("COHERE_API_KEY");
+
+        let config = LlmConfig {
+            provider: "cohere".into(),
+            model: "command-r-plus".into(),
+            api_key: None,
+            ..Default::default()
+        };
+        let result = LlmService::from_config(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("API key"));
+
+        if let Some(key) = saved {
+            std::env::set_var("COHERE_API_KEY", key);
+        }
+    }
+
+    #[test]
+    fn test_from_config_cohere_with_key() {
+        let config = LlmConfig {
+            provider: "cohere".into(),
+            model: "command-r-plus".into(),
+            api_key: Some("co-test".into()),
             ..Default::default()
         };
         let result = LlmService::from_config(&config);

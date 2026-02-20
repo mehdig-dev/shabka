@@ -92,7 +92,7 @@ impl EmbeddingService {
     pub fn from_config(config: &EmbeddingConfig) -> Result<Self> {
         match config.provider.as_str() {
             "local" => Err(ShabkaError::Config(
-                "local embedding provider has been removed; use 'ollama', 'openai', 'gemini', or 'hash'".into(),
+                "local embedding provider has been removed; use 'ollama', 'openai', 'gemini', 'cohere', or 'hash'".into(),
             )),
 
             "openai" => {
@@ -211,6 +211,43 @@ impl EmbeddingService {
                 })
             }
 
+            "cohere" => {
+                let api_key = config::resolve_api_key(
+                    config.api_key.as_deref(),
+                    config.env_var.as_deref(),
+                    "COHERE_API_KEY",
+                    "cohere",
+                    "embedding",
+                )?;
+
+                let model_name = if config.model == "hash-128d" {
+                    "embed-english-v3.0".to_string()
+                } else {
+                    config.model.clone()
+                };
+
+                let dims = config.dimensions.unwrap_or(1024);
+
+                let client =
+                    rig::providers::cohere::Client::<reqwest::Client>::builder()
+                        .api_key(&api_key)
+                        .build()
+                        .map_err(|e| {
+                            ShabkaError::Embedding(format!("failed to build Cohere client: {e}"))
+                        })?;
+
+                let model = client.embedding_model_with_ndims(&model_name, "search_document", dims);
+
+                Ok(Self {
+                    inner: EmbeddingInner::Rig(Box::new(RigModelWrapper {
+                        model,
+                        model_name,
+                    })),
+                    provider: "cohere",
+                    dimensions: dims,
+                })
+            }
+
             "hash" => Ok(Self {
                 inner: EmbeddingInner::Hash(HashEmbeddingProvider::new()),
                 provider: "hash",
@@ -219,7 +256,7 @@ impl EmbeddingService {
 
             other => Err(ShabkaError::Config(format!(
                 "unknown embedding provider: '{other}' \
-                 (expected 'openai', 'ollama', 'gemini', or 'hash')"
+                 (expected 'openai', 'ollama', 'gemini', 'cohere', or 'hash')"
             ))),
         }
     }
@@ -456,6 +493,63 @@ mod tests {
         assert_eq!(service.dimensions(), 128);
         assert_eq!(service.model_id(), "hash-128d");
         assert_eq!(service.provider_name(), "hash");
+    }
+
+    #[test]
+    fn test_cohere_without_key_errors() {
+        let saved = std::env::var("COHERE_API_KEY").ok();
+        std::env::remove_var("COHERE_API_KEY");
+
+        let config = EmbeddingConfig {
+            provider: "cohere".to_string(),
+            model: "embed-english-v3.0".to_string(),
+            api_key: None,
+            base_url: None,
+            dimensions: None,
+            env_var: None,
+        };
+        let result = EmbeddingService::from_config(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("API key"));
+
+        if let Some(key) = saved {
+            std::env::set_var("COHERE_API_KEY", key);
+        }
+    }
+
+    #[test]
+    fn test_cohere_with_key() {
+        let config = EmbeddingConfig {
+            provider: "cohere".to_string(),
+            model: "embed-english-v3.0".to_string(),
+            api_key: Some("co-test-key".to_string()),
+            base_url: None,
+            dimensions: None,
+            env_var: None,
+        };
+        let result = EmbeddingService::from_config(&config);
+        assert!(result.is_ok());
+        let service = result.unwrap();
+        assert_eq!(service.provider_name(), "cohere");
+        assert_eq!(service.dimensions(), 1024);
+        assert_eq!(service.model_id(), "embed-english-v3.0");
+    }
+
+    #[test]
+    fn test_cohere_default_model_override() {
+        let config = EmbeddingConfig {
+            provider: "cohere".to_string(),
+            model: "hash-128d".to_string(),
+            api_key: Some("co-test-key".to_string()),
+            base_url: None,
+            dimensions: None,
+            env_var: None,
+        };
+        let result = EmbeddingService::from_config(&config);
+        assert!(result.is_ok());
+        let service = result.unwrap();
+        assert_eq!(service.model_id(), "embed-english-v3.0");
     }
 
     #[test]
