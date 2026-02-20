@@ -234,6 +234,26 @@ impl LlmService {
         })
         .await
     }
+
+    /// Generate structured output from the LLM.
+    ///
+    /// Calls `generate()` and deserializes the JSON response into `T`.
+    /// Strips markdown fences if present.
+    pub async fn generate_structured<T: serde::de::DeserializeOwned>(
+        &self,
+        prompt: &str,
+        system: Option<&str>,
+    ) -> Result<T> {
+        let raw = self.generate(prompt, system).await?;
+        let cleaned = raw
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        serde_json::from_str(cleaned)
+            .map_err(|e| ShabkaError::Llm(format!("failed to parse structured LLM response: {e}")))
+    }
 }
 
 #[cfg(test)]
@@ -388,5 +408,44 @@ mod tests {
         .unwrap();
         assert_eq!(key, "env-llm-key");
         std::env::remove_var("MY_LLM_KEY");
+    }
+
+    #[test]
+    fn test_generate_structured_parse() {
+        #[derive(serde::Deserialize, Debug, PartialEq)]
+        struct TestResponse {
+            name: String,
+            value: f32,
+        }
+
+        // Simulate the markdown-stripping + deserialization logic
+        let raw = "```json\n{\"name\":\"test\",\"value\":0.5}\n```";
+        let cleaned = raw
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        let result: TestResponse = serde_json::from_str(cleaned).unwrap();
+        assert_eq!(result.name, "test");
+        assert!((result.value - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_generate_structured_parse_no_fences() {
+        #[derive(serde::Deserialize, Debug)]
+        struct Resp {
+            ok: bool,
+        }
+
+        let raw = "{\"ok\":true}";
+        let cleaned = raw
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        let result: Resp = serde_json::from_str(cleaned).unwrap();
+        assert!(result.ok);
     }
 }
