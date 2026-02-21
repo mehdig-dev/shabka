@@ -613,10 +613,84 @@ impl StorageBackend for SqliteStorage {
         .await
     }
 
-    // -- Timeline (stub) --
+    // -- Timeline --
 
-    async fn timeline(&self, _query: &TimelineQuery) -> Result<Vec<TimelineEntry>> {
-        Ok(Vec::new())
+    async fn timeline(&self, query: &TimelineQuery) -> Result<Vec<TimelineEntry>> {
+        let query = query.clone();
+
+        self.with_conn(move |conn| {
+            // Build WHERE clause dynamically from non-None fields
+            let mut conditions: Vec<String> = Vec::new();
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+            let mut idx = 1;
+
+            if let Some(ref id) = query.memory_id {
+                conditions.push(format!("m.id = ?{idx}"));
+                params.push(Box::new(id.to_string()));
+                idx += 1;
+            }
+            if let Some(ref start) = query.start {
+                conditions.push(format!("m.created_at >= ?{idx}"));
+                params.push(Box::new(start.to_rfc3339()));
+                idx += 1;
+            }
+            if let Some(ref end) = query.end {
+                conditions.push(format!("m.created_at <= ?{idx}"));
+                params.push(Box::new(end.to_rfc3339()));
+                idx += 1;
+            }
+            if let Some(ref session_id) = query.session_id {
+                conditions.push(format!("m.session_id = ?{idx}"));
+                params.push(Box::new(session_id.to_string()));
+                idx += 1;
+            }
+            if let Some(ref project_id) = query.project_id {
+                conditions.push(format!("m.project_id = ?{idx}"));
+                params.push(Box::new(project_id.clone()));
+                idx += 1;
+            }
+
+            let where_clause = if conditions.is_empty() {
+                String::new()
+            } else {
+                format!("WHERE {}", conditions.join(" AND "))
+            };
+
+            let sql = format!(
+                "SELECT m.*,
+                    (SELECT COUNT(*) FROM relations r WHERE r.source_id = m.id) as related_count
+                 FROM memories m
+                 {where_clause}
+                 ORDER BY m.created_at DESC
+                 LIMIT ?{idx}"
+            );
+            params.push(Box::new(query.limit as i64));
+
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+
+            let mut stmt = conn.prepare(&sql).map_err(|e| {
+                ShabkaError::Storage(format!("failed to prepare timeline query: {e}"))
+            })?;
+
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    let memory = row_to_memory(row)?;
+                    let related_count: i64 = row.get("related_count")?;
+                    Ok(TimelineEntry::from((&memory, related_count as usize)))
+                })
+                .map_err(|e| ShabkaError::Storage(format!("failed to query timeline: {e}")))?;
+
+            let mut entries = Vec::new();
+            for row in rows {
+                entries.push(row.map_err(|e| {
+                    ShabkaError::Storage(format!("failed to read timeline row: {e}"))
+                })?);
+            }
+
+            Ok(entries)
+        })
+        .await
     }
 
     // -- Graph (stubs) --
@@ -900,5 +974,55 @@ mod tests {
         let query = vec![1.0_f32, 0.0, 0.0];
         let results = storage.vector_search(&query, 10).await.unwrap();
         assert!(results.is_empty());
+    }
+
+    // ── Timeline tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_timeline_basic() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let mut m1 = test_memory();
+        m1.title = "First".to_string();
+        m1.created_at = chrono::Utc::now() - chrono::Duration::hours(2);
+        m1.updated_at = m1.created_at;
+
+        let mut m2 = test_memory();
+        m2.title = "Second".to_string();
+
+        storage.save_memory(&m1, None).await.unwrap();
+        storage.save_memory(&m2, None).await.unwrap();
+
+        let query = TimelineQuery {
+            limit: 10,
+            ..Default::default()
+        };
+        let entries = storage.timeline(&query).await.unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "Second"); // most recent first
+        assert_eq!(entries[1].title, "First");
+    }
+
+    #[tokio::test]
+    async fn test_timeline_with_filters() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let mut m1 = test_memory();
+        m1.project_id = Some("proj-a".to_string());
+        let mut m2 = test_memory();
+        m2.project_id = Some("proj-b".to_string());
+
+        storage.save_memory(&m1, None).await.unwrap();
+        storage.save_memory(&m2, None).await.unwrap();
+
+        let query = TimelineQuery {
+            project_id: Some("proj-a".to_string()),
+            limit: 10,
+            ..Default::default()
+        };
+        let entries = storage.timeline(&query).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, m1.id);
     }
 }
