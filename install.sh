@@ -37,13 +37,23 @@ main() {
         err "Failed to determine latest version"
     fi
 
-    local _url="https://github.com/$REPO/releases/download/$_version/shabka-$_version-$_target.tar.gz"
+    local _archive="shabka-$_version-$_target.tar.gz"
+    local _url="https://github.com/$REPO/releases/download/$_version/$_archive"
+    local _sums_url="https://github.com/$REPO/releases/download/$_version/SHA256SUMS.txt"
 
     printf "Installing shabka %s for %s...\n" "$_version" "$_target"
 
-    mkdir -p "$INSTALL_DIR"
+    local _tmpdir
+    _tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$_tmpdir"' EXIT
 
-    curl -sSfL "$_url" | tar xz -C "$INSTALL_DIR"
+    curl -sSfL "$_url" -o "$_tmpdir/$_archive"
+    curl -sSfL "$_sums_url" -o "$_tmpdir/SHA256SUMS.txt"
+
+    verify_checksum "$_tmpdir" "$_archive"
+
+    mkdir -p "$INSTALL_DIR"
+    tar xzf "$_tmpdir/$_archive" -C "$INSTALL_DIR"
     chmod +x "$INSTALL_DIR/shabka" "$INSTALL_DIR/shabka-mcp"
 
     printf "\n✓ Installed shabka and shabka-mcp to %s\n" "$INSTALL_DIR"
@@ -56,6 +66,37 @@ main() {
             printf "    export PATH=\"%s:\$PATH\"\n\n" "$INSTALL_DIR"
             ;;
     esac
+}
+
+verify_checksum() {
+    local _dir="$1"
+    local _file="$2"
+
+    local _expected
+    _expected="$(grep "$_file" "$_dir/SHA256SUMS.txt" | awk '{print $1}')"
+    if [ -z "$_expected" ]; then
+        printf "warning: no checksum found for %s, skipping verification\n" "$_file"
+        return 0
+    fi
+
+    local _actual
+    if command -v sha256sum > /dev/null 2>&1; then
+        _actual="$(cd "$_dir" && sha256sum "$_file" | awk '{print $1}')"
+    elif command -v shasum > /dev/null 2>&1; then
+        _actual="$(cd "$_dir" && shasum -a 256 "$_file" | awk '{print $1}')"
+    else
+        printf "warning: no SHA256 tool found (sha256sum or shasum), skipping verification\n"
+        return 0
+    fi
+
+    if [ "$_actual" != "$_expected" ]; then
+        printf "error: checksum mismatch for %s\n" "$_file" >&2
+        printf "  expected: %s\n" "$_expected" >&2
+        printf "  got:      %s\n" "$_actual" >&2
+        exit 1
+    fi
+
+    printf "✓ Checksum verified\n"
 }
 
 need_cmd() {
