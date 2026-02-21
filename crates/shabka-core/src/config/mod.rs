@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShabkaConfig {
     #[serde(default)]
+    pub storage: StorageConfig,
+    #[serde(default)]
     pub helix: HelixConfig,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
@@ -52,6 +54,24 @@ impl Default for HelixConfig {
             port: default_helix_port(),
             api_key: None,
             auto_start: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    #[serde(default = "default_storage_backend")]
+    pub backend: String,
+    /// Custom path for SQLite database. Defaults to `~/.config/shabka/shabka.db`.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_storage_backend(),
+            path: None,
         }
     }
 }
@@ -170,6 +190,9 @@ impl Default for LlmConfig {
         }
     }
 }
+
+/// Valid storage backend names.
+pub const VALID_STORAGE_BACKENDS: &[&str] = &["sqlite", "helix"];
 
 /// Valid LLM provider names.
 pub const VALID_LLM_PROVIDERS: &[&str] = &[
@@ -337,6 +360,9 @@ impl Default for HistoryConfig {
 
 // -- Defaults --
 
+fn default_storage_backend() -> String {
+    "sqlite".to_string()
+}
 fn default_helix_url() -> String {
     "http://localhost".to_string()
 }
@@ -454,6 +480,7 @@ impl ShabkaConfig {
     /// Load with defaults only (no files).
     pub fn default_config() -> Self {
         Self {
+            storage: StorageConfig::default(),
             helix: HelixConfig::default(),
             embedding: EmbeddingConfig::default(),
             mcp: McpConfig::default(),
@@ -474,6 +501,15 @@ impl ShabkaConfig {
     /// This is lenient — it fixes values rather than rejecting the config.
     pub fn validate(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
+
+        // Storage backend
+        if !VALID_STORAGE_BACKENDS.contains(&self.storage.backend.as_str()) {
+            warnings.push(format!(
+                "unknown storage backend '{}', valid: {}",
+                self.storage.backend,
+                VALID_STORAGE_BACKENDS.join(", ")
+            ));
+        }
 
         // Embedding provider
         if !VALID_PROVIDERS.contains(&self.embedding.provider.as_str()) {
@@ -1202,5 +1238,56 @@ session_compression = false
         // core comparison that drives it:
         assert_eq!(service.dimensions(), 128);
         assert_eq!(state.dimensions, 768);
+    }
+
+    // -- StorageConfig tests --
+
+    #[test]
+    fn test_storage_config_defaults() {
+        let config = ShabkaConfig::default_config();
+        assert_eq!(config.storage.backend, "sqlite");
+        assert!(config.storage.path.is_none());
+    }
+
+    #[test]
+    fn test_storage_config_helix() {
+        let toml_str = r#"
+[storage]
+backend = "helix"
+"#;
+        let config: ShabkaConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.storage.backend, "helix");
+    }
+
+    #[test]
+    fn test_storage_config_sqlite_custom_path() {
+        let toml_str = r#"
+[storage]
+backend = "sqlite"
+path = "/tmp/my-shabka.db"
+"#;
+        let config: ShabkaConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.storage.backend, "sqlite");
+        assert_eq!(config.storage.path.as_deref(), Some("/tmp/my-shabka.db"));
+    }
+
+    #[test]
+    fn test_storage_config_backward_compat() {
+        let toml_str = r#"
+[embedding]
+provider = "hash"
+"#;
+        let config: ShabkaConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.storage.backend, "sqlite");
+    }
+
+    #[test]
+    fn test_validate_unknown_storage_backend() {
+        let mut config = ShabkaConfig::default_config();
+        config.storage.backend = "banana".to_string();
+        let warnings = config.validate();
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("unknown storage backend")));
     }
 }
