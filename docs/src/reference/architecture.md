@@ -33,7 +33,7 @@
 | Crate | Purpose |
 |-------|---------|
 | `shabka-core` | Data model, storage, embeddings, ranking, sharing, graph intelligence, history audit trail, smart dedup, PII scrubbing, LLM service, auto-tagging, quality assessment, trust scoring, memory consolidation, token estimation, context packs, retry logic |
-| `shabka-mcp` | MCP server (13 tools for LLM integration) |
+| `shabka-mcp` | MCP server (15 tools for LLM integration) |
 | `shabka-hooks` | Auto-capture + auto-relate from Claude Code sessions |
 | `shabka-web` | Web dashboard (CRUD, search, graph visualization, REST API, analytics) |
 | `shabka-cli` | CLI tool (search, get, chain, prune, history, status, export, import, init, reembed, consolidate, context-pack, verify) |

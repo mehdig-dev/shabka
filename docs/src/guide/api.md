@@ -2,7 +2,7 @@
 
 ## MCP Tools
 
-Shabka exposes 13 tools via the MCP protocol:
+Shabka exposes 15 tools via the MCP protocol:
 
 | Tool | Description |
 |------|-------------|
@@ -19,6 +19,8 @@ Shabka exposes 13 tools via the MCP protocol:
 | `assess` | Memory quality scorecard (0-100 score, issue counts, top issues) |
 | `consolidate` | Merge clusters of similar memories using LLM |
 | `verify_memory` | Set verification status (verified, disputed, outdated, unverified) |
+| `get_context` | Token-budgeted context pack of relevant memories, formatted as markdown |
+| `save_session_summary` | Batch-save multiple memories from a session (embed, dedup, auto-relate each) |
 
 **Retrieval pattern:** Start with `search` (compact index, ~50-100 tokens each), drill into `get_memories` for full content, use `timeline` for chronological context. Pass `token_budget` to `search` to cap results within a token limit (~4 chars/token estimate) — useful for rate-limited or budget-conscious LLM usage.
 
