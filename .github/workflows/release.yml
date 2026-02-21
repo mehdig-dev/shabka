@@ -23,6 +23,8 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
 
@@ -37,11 +39,19 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install cross-compiler (ARM64 Linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build shabka-cli
         run: cargo build --release --no-default-features -p shabka-cli --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Build shabka-mcp
         run: cargo build --release --no-default-features -p shabka-mcp --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -144,6 +154,7 @@ jobs:
           VERSION="${TAG_NAME#v}"
 
           sha_linux_x86=$(grep "x86_64-unknown-linux-gnu" artifacts/SHA256SUMS.txt | awk '{print $1}')
+          sha_linux_arm=$(grep "aarch64-unknown-linux-gnu" artifacts/SHA256SUMS.txt | awk '{print $1}')
           sha_mac_x86=$(grep "x86_64-apple-darwin" artifacts/SHA256SUMS.txt | awk '{print $1}')
           sha_mac_arm=$(grep "aarch64-apple-darwin" artifacts/SHA256SUMS.txt | awk '{print $1}')
 
@@ -151,5 +162,6 @@ jobs:
             -f event_type=update-formula \
             -f "client_payload[version]=$VERSION" \
             -f "client_payload[sha_linux_x86]=$sha_linux_x86" \
+            -f "client_payload[sha_linux_arm]=$sha_linux_arm" \
             -f "client_payload[sha_mac_x86]=$sha_mac_x86" \
             -f "client_payload[sha_mac_arm]=$sha_mac_arm"
