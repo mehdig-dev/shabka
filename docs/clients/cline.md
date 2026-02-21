@@ -49,6 +49,8 @@ In VS Code settings:
 
 In Cline's chat: *"Search for memories about authentication"*
 
+**Alternative:** If you're already running `shabka-web` (the web dashboard), the MCP endpoint is also available at `http://localhost:37737/mcp` — no separate server needed.
+
 ## Troubleshooting
 
 | Problem | Fix |

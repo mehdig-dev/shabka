@@ -41,6 +41,8 @@ In Cursor's chat, try:
 - *"Search for authentication"*
 - *"Save a memory about our API design"*
 
+**Alternative:** If you're already running `shabka-web` (the web dashboard), the MCP endpoint is also available at `http://localhost:37737/mcp` — no separate server needed.
+
 ## Troubleshooting
 
 | Problem | Fix |

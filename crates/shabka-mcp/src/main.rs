@@ -13,6 +13,10 @@ struct Cli {
     /// Start in HTTP mode instead of stdio (default port: 8080)
     #[arg(long, num_args = 0..=1, default_missing_value = "8080", value_name = "PORT")]
     http: Option<u16>,
+
+    /// Bind address for HTTP mode (default: 127.0.0.1)
+    #[arg(long, default_value = "127.0.0.1", value_name = "ADDR")]
+    bind: String,
 }
 
 #[tokio::main]
@@ -25,7 +29,7 @@ async fn main() -> Result<()> {
         .init();
 
     match cli.http {
-        Some(port) => run_http(port).await,
+        Some(port) => run_http(port, &cli.bind).await,
         None => run_stdio().await,
     }
 }
@@ -38,13 +42,13 @@ async fn run_stdio() -> Result<()> {
     Ok(())
 }
 
-async fn run_http(port: u16) -> Result<()> {
+async fn run_http(port: u16, bind: &str) -> Result<()> {
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
     use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
     use rmcp::transport::StreamableHttpService;
     use tokio_util::sync::CancellationToken;
 
-    tracing::info!("Starting Shabka MCP server (HTTP on port {port})");
+    tracing::info!("Starting Shabka MCP server (HTTP on {bind}:{port})");
 
     let ct = CancellationToken::new();
     let session_manager = Arc::new(LocalSessionManager::default());
@@ -64,7 +68,7 @@ async fn run_http(port: u16) -> Result<()> {
 
     let app = axum::Router::new().nest_service("/mcp", mcp_service);
 
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{bind}:{port}");
     tracing::info!("Listening on http://{addr}/mcp");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

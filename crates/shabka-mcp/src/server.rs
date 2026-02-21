@@ -1890,4 +1890,71 @@ mod tests {
             .to_string();
         assert_eq!(error_type, "embedding_error");
     }
+
+    #[test]
+    fn test_session_memory_input_deserialize() {
+        let json = serde_json::json!({
+            "title": "Auth uses JWT",
+            "content": "We chose JWT for stateless auth tokens.",
+            "kind": "decision"
+        });
+        let input: SessionMemoryInput = serde_json::from_value(json).unwrap();
+        assert_eq!(input.title, "Auth uses JWT");
+        assert_eq!(input.kind, "decision");
+        assert!(input.tags.is_empty());
+        assert!((input.importance - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_session_memory_input_with_all_fields() {
+        let json = serde_json::json!({
+            "title": "Database migration pattern",
+            "content": "Always use reversible migrations.",
+            "kind": "pattern",
+            "tags": ["database", "migrations"],
+            "importance": 0.9
+        });
+        let input: SessionMemoryInput = serde_json::from_value(json).unwrap();
+        assert_eq!(input.tags, vec!["database", "migrations"]);
+        assert!((input.importance - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_save_session_summary_params_deserialize() {
+        let json = serde_json::json!({
+            "memories": [
+                { "title": "Lesson 1", "content": "Content 1", "kind": "lesson" },
+                { "title": "Fix 2", "content": "Content 2", "kind": "fix", "tags": ["auth"] }
+            ],
+            "session_context": "Worked on auth refactor",
+            "project_id": "shabka"
+        });
+        let params: SaveSessionSummaryParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.memories.len(), 2);
+        assert_eq!(
+            params.session_context.as_deref(),
+            Some("Worked on auth refactor")
+        );
+        assert_eq!(params.project_id.as_deref(), Some("shabka"));
+    }
+
+    #[test]
+    fn test_save_session_summary_params_minimal() {
+        let json = serde_json::json!({
+            "memories": []
+        });
+        let params: SaveSessionSummaryParams = serde_json::from_value(json).unwrap();
+        assert!(params.memories.is_empty());
+        assert!(params.session_context.is_none());
+        assert!(params.project_id.is_none());
+    }
+
+    #[test]
+    fn test_session_memory_input_schema_generated() {
+        let schema = schemars::schema_for!(SaveSessionSummaryParams);
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(json.contains("memories"));
+        assert!(json.contains("session_context"));
+        assert!(json.contains("project_id"));
+    }
 }
