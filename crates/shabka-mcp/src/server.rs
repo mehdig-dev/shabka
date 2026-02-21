@@ -292,6 +292,42 @@ pub struct GetContextParams {
     pub token_budget: usize,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SessionMemoryInput {
+    #[schemars(description = "Short, searchable title for this memory")]
+    pub title: String,
+
+    #[schemars(description = "Full content in markdown format")]
+    pub content: String,
+
+    #[schemars(
+        description = "Kind of memory: observation, decision, pattern, error, fix, preference, fact, lesson, or todo"
+    )]
+    pub kind: String,
+
+    #[schemars(description = "Tags for categorization (optional)")]
+    #[serde(default)]
+    pub tags: Vec<String>,
+
+    #[schemars(description = "Importance score 0.0-1.0 (optional, default 0.5)")]
+    #[serde(default = "default_importance")]
+    pub importance: f32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SaveSessionSummaryParams {
+    #[schemars(description = "Array of memories to save from this session")]
+    pub memories: Vec<SessionMemoryInput>,
+
+    #[schemars(description = "Brief description of what the session was about (optional)")]
+    #[serde(default)]
+    pub session_context: Option<String>,
+
+    #[schemars(description = "Project ID to associate all memories with (optional)")]
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
 fn default_context_query() -> String {
     "*".to_string()
 }
@@ -1533,6 +1569,233 @@ impl ShabkaServer {
         let formatted = format_context_pack(&pack);
         Ok(CallToolResult::success(vec![Content::text(formatted)]))
     }
+
+    #[tool(
+        name = "save_session_summary",
+        description = "Save multiple memories from a session at once. Use this at the end of a conversation to persist what was learned — decisions, patterns, fixes, observations. Each memory goes through the same pipeline as save_memory (embed, dedup, auto-relate). Returns a summary of what was saved, skipped, or merged."
+    )]
+    async fn save_session_summary(
+        &self,
+        Parameters(params): Parameters<SaveSessionSummaryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = Uuid::now_v7();
+        let mut saved = 0usize;
+        let mut skipped = 0usize;
+        let mut superseded = 0usize;
+        let mut errors = Vec::new();
+
+        for (i, input) in params.memories.iter().enumerate() {
+            let kind: MemoryKind = match input.kind.parse() {
+                Ok(k) => k,
+                Err(e) => {
+                    errors.push(format!("memory[{i}]: invalid kind — {e}"));
+                    continue;
+                }
+            };
+
+            if let Err(e) = shabka_core::model::validate_create_input(
+                &input.title,
+                &input.content,
+                input.importance,
+            ) {
+                errors.push(format!("memory[{i}]: {e}"));
+                continue;
+            }
+
+            let privacy = sharing::parse_default_privacy(&self.config.privacy);
+
+            let mut memory = Memory::new(
+                input.title.clone(),
+                input.content.clone(),
+                kind,
+                self.user_id.clone(),
+            )
+            .with_tags(input.tags.clone())
+            .with_importance(input.importance)
+            .with_privacy(privacy)
+            .with_session(session_id);
+
+            if let Some(ref pid) = params.project_id {
+                memory = memory.with_project(pid.clone());
+            }
+
+            // Auto-tag if no meaningful tags provided
+            let user_tags_empty = input.tags.is_empty()
+                || input
+                    .tags
+                    .iter()
+                    .all(|t| t == "auto-capture" || t == "hook");
+            if user_tags_empty {
+                if let Some(ref llm) = self.llm {
+                    if let Some(result) =
+                        shabka_core::auto_tag::auto_tag(&memory, llm.as_ref()).await
+                    {
+                        let mut tags = memory.tags.clone();
+                        for tag in result.tags {
+                            if !tags.contains(&tag) {
+                                tags.push(tag);
+                            }
+                        }
+                        memory.tags = tags;
+                        memory.importance = result.importance;
+                    }
+                }
+            }
+
+            // Embed
+            let embedding = match self.embedder.embed(&memory.embedding_text()).await {
+                Ok(e) => e,
+                Err(e) => {
+                    errors.push(format!("memory[{i}]: embed failed — {e}"));
+                    continue;
+                }
+            };
+
+            // Dedup check
+            let llm_ref = self.llm.as_deref();
+            let dedup_decision = dedup::check_duplicate(
+                self.storage.as_ref(),
+                &embedding,
+                &self.config.graph,
+                None,
+                llm_ref,
+                &memory.title,
+                &memory.content,
+            )
+            .await;
+
+            match dedup_decision {
+                DedupDecision::Skip { .. } => {
+                    skipped += 1;
+                    continue;
+                }
+                DedupDecision::Supersede {
+                    existing_id,
+                    existing_title,
+                    similarity,
+                    ..
+                } => {
+                    if let Err(e) = self.storage.save_memory(&memory, Some(&embedding)).await {
+                        errors.push(format!("memory[{i}]: save failed — {e}"));
+                        continue;
+                    }
+                    let _ = self
+                        .storage
+                        .update_memory(
+                            existing_id,
+                            &UpdateMemoryInput {
+                                status: Some(MemoryStatus::Superseded),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    let relation = MemoryRelation {
+                        source_id: memory.id,
+                        target_id: existing_id,
+                        relation_type: RelationType::Supersedes,
+                        strength: similarity,
+                    };
+                    let _ = self.storage.add_relation(&relation).await;
+                    self.history.log(
+                        &MemoryEvent::new(memory.id, EventAction::Created, self.user_id.clone())
+                            .with_title(&memory.title),
+                    );
+                    self.history.log(
+                        &MemoryEvent::new(
+                            existing_id,
+                            EventAction::Superseded,
+                            self.user_id.clone(),
+                        )
+                        .with_title(&existing_title),
+                    );
+                    superseded += 1;
+                    saved += 1;
+                }
+                DedupDecision::Update {
+                    existing_id,
+                    merged_content,
+                    merged_title,
+                    ..
+                } => {
+                    let _ = self
+                        .storage
+                        .update_memory(
+                            existing_id,
+                            &UpdateMemoryInput {
+                                title: Some(merged_title.clone()),
+                                content: Some(merged_content),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    self.history.log(
+                        &MemoryEvent::new(existing_id, EventAction::Updated, self.user_id.clone())
+                            .with_title(&merged_title),
+                    );
+                    saved += 1;
+                }
+                DedupDecision::Contradict {
+                    existing_id,
+                    similarity,
+                    ..
+                } => {
+                    if let Err(e) = self.storage.save_memory(&memory, Some(&embedding)).await {
+                        errors.push(format!("memory[{i}]: save failed — {e}"));
+                        continue;
+                    }
+                    let relation = MemoryRelation {
+                        source_id: memory.id,
+                        target_id: existing_id,
+                        relation_type: RelationType::Contradicts,
+                        strength: similarity,
+                    };
+                    let _ = self.storage.add_relation(&relation).await;
+                    self.history.log(
+                        &MemoryEvent::new(memory.id, EventAction::Created, self.user_id.clone())
+                            .with_title(&memory.title),
+                    );
+                    saved += 1;
+                }
+                DedupDecision::Add => {
+                    if let Err(e) = self.storage.save_memory(&memory, Some(&embedding)).await {
+                        errors.push(format!("memory[{i}]: save failed — {e}"));
+                        continue;
+                    }
+                    self.history.log(
+                        &MemoryEvent::new(memory.id, EventAction::Created, self.user_id.clone())
+                            .with_title(&memory.title),
+                    );
+
+                    // Auto-relate
+                    let _ = graph::semantic_auto_relate(
+                        self.storage.as_ref(),
+                        memory.id,
+                        &embedding,
+                        Some(self.config.graph.similarity_threshold),
+                        Some(self.config.graph.max_relations),
+                    )
+                    .await;
+
+                    saved += 1;
+                }
+            }
+        }
+
+        let response = serde_json::json!({
+            "session_id": session_id.to_string(),
+            "session_context": params.session_context,
+            "total_submitted": params.memories.len(),
+            "saved": saved,
+            "skipped_duplicates": skipped,
+            "superseded_existing": superseded,
+            "errors": errors,
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&response)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
 }
 
 #[tool_handler]
@@ -1554,6 +1817,7 @@ impl ServerHandler for ShabkaServer {
                  Quality: assess (scorecard with issue counts and overall score).\n\n\
                  Trust: verify_memory (set verified/disputed/outdated status — verified memories rank higher).\n\n\
                  Context: get_context (token-budgeted context pack of relevant memories for prompt injection).\n\n\
+                 Session capture: save_session_summary (batch-save multiple memories at end of conversation).\n\n\
                  Always start with search, then drill down as needed."
                     .to_string(),
             ),
