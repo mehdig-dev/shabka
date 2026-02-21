@@ -1,57 +1,72 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-# Shabka installer — builds from source and installs CLI + MCP server
-# Usage: curl -sSL https://raw.githubusercontent.com/mehdig-dev/shabka/main/install.sh | bash
+REPO="mehdig-dev/shabka"
+INSTALL_DIR="${SHABKA_INSTALL_DIR:-$HOME/.shabka/bin}"
 
-REPO="https://github.com/mehdig-dev/shabka.git"
-INSTALL_DIR="${SHABKA_INSTALL_DIR:-$HOME/.local/bin}"
-CLONE_DIR="${SHABKA_CLONE_DIR:-$HOME/.local/share/shabka}"
+main() {
+    need_cmd curl
+    need_cmd tar
 
-info()  { printf '\033[1;34m=>\033[0m %s\n' "$*"; }
-ok()    { printf '\033[1;32m=>\033[0m %s\n' "$*"; }
-warn()  { printf '\033[1;33m=>\033[0m %s\n' "$*"; }
-error() { printf '\033[1;31m=>\033[0m %s\n' "$*" >&2; exit 1; }
+    local _arch
+    _arch="$(uname -m)"
+    local _os
+    _os="$(uname -s)"
 
-# --- Prerequisites ---
+    local _target
+    case "$_os" in
+        Linux)
+            case "$_arch" in
+                x86_64) _target="x86_64-unknown-linux-gnu" ;;
+                *) err "Unsupported architecture: $_arch" ;;
+            esac
+            ;;
+        Darwin)
+            case "$_arch" in
+                x86_64) _target="x86_64-apple-darwin" ;;
+                arm64)  _target="aarch64-apple-darwin" ;;
+                *) err "Unsupported architecture: $_arch" ;;
+            esac
+            ;;
+        *) err "Unsupported OS: $_os" ;;
+    esac
 
-command -v cargo >/dev/null 2>&1 || error "Rust toolchain not found. Install from https://rustup.rs"
-command -v git   >/dev/null 2>&1 || error "git not found."
-command -v docker >/dev/null 2>&1 || warn "Docker not found — you'll need it to run HelixDB."
+    local _version
+    _version="$(curl -sSf "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)"
+    if [ -z "$_version" ]; then
+        err "Failed to determine latest version"
+    fi
 
-info "Installing Shabka to $INSTALL_DIR"
+    local _url="https://github.com/$REPO/releases/download/$_version/shabka-$_version-$_target.tar.gz"
 
-# --- Clone or update ---
+    printf "Installing shabka %s for %s...\n" "$_version" "$_target"
 
-if [ -d "$CLONE_DIR/.git" ]; then
-    info "Updating existing clone at $CLONE_DIR"
-    git -C "$CLONE_DIR" pull --ff-only
-else
-    info "Cloning $REPO"
-    git clone "$REPO" "$CLONE_DIR"
-fi
+    mkdir -p "$INSTALL_DIR"
 
-# --- Build ---
+    curl -sSfL "$_url" | tar xz -C "$INSTALL_DIR"
+    chmod +x "$INSTALL_DIR/shabka" "$INSTALL_DIR/shabka-mcp"
 
-info "Building CLI and MCP server (this may take a few minutes)..."
-cargo install --path "$CLONE_DIR/crates/shabka-cli" --root "$HOME/.local" --no-default-features --locked 2>/dev/null \
-  || cargo install --path "$CLONE_DIR/crates/shabka-cli" --root "$HOME/.local" --no-default-features
-cargo install --path "$CLONE_DIR/crates/shabka-mcp" --root "$HOME/.local" --no-default-features --locked 2>/dev/null \
-  || cargo install --path "$CLONE_DIR/crates/shabka-mcp" --root "$HOME/.local" --no-default-features
+    printf "\n✓ Installed shabka and shabka-mcp to %s\n" "$INSTALL_DIR"
 
-# --- Verify ---
+    # Check if in PATH
+    case ":$PATH:" in
+        *":$INSTALL_DIR:"*) ;;
+        *)
+            printf "\n  Add to your PATH:\n"
+            printf "    export PATH=\"%s:\$PATH\"\n\n" "$INSTALL_DIR"
+            ;;
+    esac
+}
 
-if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
-    warn "$INSTALL_DIR is not in your PATH. Add it:"
-    warn "  export PATH=\"$INSTALL_DIR:\$PATH\""
-fi
+need_cmd() {
+    if ! command -v "$1" > /dev/null 2>&1; then
+        err "Required command not found: $1"
+    fi
+}
 
-ok "Installed:"
-ok "  shabka     — CLI tool"
-ok "  shabka-mcp — MCP server"
-echo ""
-info "Next steps:"
-echo "  1. Start HelixDB:    cd $CLONE_DIR && just db"
-echo "  2. Register MCP:     claude mcp add shabka -- $INSTALL_DIR/shabka-mcp"
-echo "  3. Init config:      shabka init"
-echo "  4. Check setup:      shabka init --check"
+err() {
+    printf "error: %s\n" "$1" >&2
+    exit 1
+}
+
+main "$@"

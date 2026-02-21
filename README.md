@@ -31,26 +31,32 @@ Shabka is an MCP server that gives AI coding assistants persistent, searchable m
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Search](docs/screenshots/search.png) | ![Detail](docs/screenshots/detail.png) |
 | Memory list with kind filters | Filter by kind, tag, project | Markdown content, relations, metadata |
 
-| Knowledge Graph | Analytics |
-|:-:|:-:|
-| ![Graph](docs/screenshots/graph.png) | ![Analytics](docs/screenshots/analytics.png) |
-| Interactive graph visualization | Quality score, charts, stats |
+| Knowledge Graph | Analytics | Interactive TUI |
+|:-:|:-:|:-:|
+| ![Graph](docs/screenshots/graph.png) | ![Analytics](docs/screenshots/analytics.png) | ![TUI](docs/screenshots/tui.png) |
+| Interactive graph visualization | Quality score, charts, stats | `shabka tui` — browse & search |
 
 ## Quick Start
 
-### 1. Install from crates.io
+### Option A: Install script (recommended)
+
+```bash
+curl -sSf https://raw.githubusercontent.com/mehdig-dev/shabka/main/install.sh | sh
+```
+
+### Option B: From crates.io
 
 ```bash
 cargo install shabka-cli shabka-mcp
 ```
 
-### 2. Register the MCP server
+### Register the MCP server
 
 ```bash
 claude mcp add shabka shabka-mcp
 ```
 
-### 3. Try it
+### Try it
 
 Open a new Claude Code session — the 14 Shabka tools are now available. Try:
 
@@ -59,6 +65,14 @@ Open a new Claude Code session — the 14 Shabka tools are now available. Try:
 - *"What do you remember about the database schema?"*
 
 That's it — SQLite storage works out of the box with zero configuration.
+
+## Try It in 30 Seconds
+
+```bash
+shabka demo                    # Seed 12 sample memories
+shabka tui                     # Browse interactively
+shabka search "authentication" # Search from CLI
+```
 
 <details>
 <summary><strong>Advanced: HelixDB backend</strong></summary>

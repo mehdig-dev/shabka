@@ -1,3 +1,5 @@
+mod tui;
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -192,6 +194,14 @@ enum Cli {
         /// Write output to file instead of stdout
         #[arg(short, long)]
         output: Option<String>,
+    },
+    /// Launch interactive TUI for browsing memories
+    Tui,
+    /// Populate sample memories for demonstration
+    Demo {
+        /// Remove demo memories instead of creating them
+        #[arg(long)]
+        clean: bool,
     },
 }
 
@@ -394,6 +404,14 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
                 &storage, &embedder, user_id, &query, tokens, project, kind, tag, json, output,
             )
             .await
+        }
+        Cli::Tui => tui::run_tui(config).await,
+        Cli::Demo { clean } => {
+            let storage = make_storage(config)?;
+            let embedder = EmbeddingService::from_config(&config.embedding)
+                .context("failed to create embedding service")?;
+            let history = HistoryLogger::new(config.history.enabled);
+            cmd_demo(&storage, &embedder, user_id, &history, clean).await
         }
     }
 }
@@ -2311,6 +2329,257 @@ async fn cmd_consolidate(
             result.memories_created,
         );
     }
+
+    Ok(())
+}
+
+const DEMO_PREFIX: &str = "[demo] ";
+
+async fn cmd_demo(
+    storage: &Storage,
+    embedder: &EmbeddingService,
+    user_id: &str,
+    history: &HistoryLogger,
+    clean: bool,
+) -> Result<()> {
+    if clean {
+        return demo_clean(storage, history, user_id).await;
+    }
+
+    // Check if demo data already exists
+    let timeline = storage
+        .timeline(&TimelineQuery {
+            limit: 500,
+            ..Default::default()
+        })
+        .await?;
+    if timeline.iter().any(|e| e.title.starts_with(DEMO_PREFIX)) {
+        println!(
+            "{} Demo data already exists. Use {} to remove it first.",
+            "Skipped.".yellow(),
+            "shabka demo --clean".cyan()
+        );
+        return Ok(());
+    }
+
+    println!("{}", "Seeding demo memories...".cyan());
+
+    // 12 sample memories across all 9 kinds
+    let demos: Vec<(MemoryKind, &str, &str, f32, Vec<&str>)> = vec![
+        (
+            MemoryKind::Decision,
+            "[demo] Use JWT with short-lived access tokens for API auth",
+            "Chose JWT over session cookies for the REST API. Access tokens expire in 15 minutes, \
+             refresh tokens in 7 days. Stateless validation reduces database load. \
+             Trade-off: token revocation requires a deny-list check.",
+            0.9,
+            vec!["auth", "api", "security"],
+        ),
+        (
+            MemoryKind::Error,
+            "[demo] Connection pool exhaustion under load",
+            "The API started returning 503s during peak traffic. Root cause: default pool size \
+             of 10 connections was too low for 200 concurrent requests. Each request held a \
+             connection for ~50ms, creating a bottleneck at the pool checkout.",
+            0.8,
+            vec!["database", "performance", "production"],
+        ),
+        (
+            MemoryKind::Fix,
+            "[demo] Increase pool size and add connection timeout",
+            "Fixed the pool exhaustion by increasing max connections to 50 and adding a 5s \
+             checkout timeout with a retry. Also added connection pool metrics to the /health \
+             endpoint for early warning.",
+            0.8,
+            vec!["database", "performance"],
+        ),
+        (
+            MemoryKind::Pattern,
+            "[demo] Repository pattern for database access",
+            "All database access goes through repository structs that own a connection pool \
+             reference. Each entity has its own repository (UserRepo, OrderRepo). Repositories \
+             expose domain-specific methods, not raw SQL. This keeps SQL contained and testable \
+             with mock repositories.",
+            0.7,
+            vec!["architecture", "database", "testing"],
+        ),
+        (
+            MemoryKind::Observation,
+            "[demo] Users abandon onboarding at the email verification step",
+            "Analytics show 40% drop-off at email verification. Users sign up, receive the \
+             confirmation email (delivery confirmed via SendGrid), but never click the link. \
+             Hypothesis: the email lands in spam, or users expect magic-link login instead.",
+            0.6,
+            vec!["ux", "onboarding", "analytics"],
+        ),
+        (
+            MemoryKind::Lesson,
+            "[demo] Always add database indexes before load testing",
+            "Spent two days debugging slow queries that turned out to need a composite index \
+             on (user_id, created_at). The query planner was doing full table scans on 2M rows. \
+             Lesson: check EXPLAIN output for any query that filters or sorts, especially in \
+             join conditions.",
+            0.85,
+            vec!["database", "performance", "testing"],
+        ),
+        (
+            MemoryKind::Preference,
+            "[demo] Prefer Result<T> over panicking in library code",
+            "Library crates should propagate errors with Result, never panic. Use anyhow::Result \
+             in applications, thiserror for library error types. Reserve unwrap() for cases with \
+             proof of correctness (e.g., static regexes, known-valid parses).",
+            0.7,
+            vec!["rust", "error-handling", "conventions"],
+        ),
+        (
+            MemoryKind::Fact,
+            "[demo] PostgreSQL JSONB supports GIN indexes for containment queries",
+            "JSONB columns with a GIN index support fast @> (contains) queries. This means \
+             you can query JSON arrays and nested objects efficiently without extracting them \
+             into separate tables. GIN indexes are slower to update but fast for reads.",
+            0.5,
+            vec!["database", "postgresql"],
+        ),
+        (
+            MemoryKind::Todo,
+            "[demo] Migrate from bcrypt to argon2id for password hashing",
+            "bcrypt truncates at 72 bytes and has weaker GPU resistance than argon2id. Plan: \
+             add argon2id as the default hasher, re-hash on next login, keep bcrypt as fallback \
+             for un-migrated passwords. Target: next security sprint.",
+            0.6,
+            vec!["security", "auth", "migration"],
+        ),
+        (
+            MemoryKind::Decision,
+            "[demo] Use SQLite for local development, PostgreSQL for production",
+            "SQLite for dev gives instant setup with no Docker dependency. Feature flags gate \
+             PostgreSQL-specific features (LISTEN/NOTIFY, advisory locks). CI runs tests against \
+             both databases. The ORM layer abstracts differences.",
+            0.7,
+            vec!["database", "architecture", "dx"],
+        ),
+        (
+            MemoryKind::Pattern,
+            "[demo] Structured logging with correlation IDs across services",
+            "Every incoming request gets a correlation ID (X-Request-ID header or generated UUID). \
+             This ID propagates through all internal service calls and appears in every log line. \
+             Makes distributed tracing possible without a full tracing backend.",
+            0.7,
+            vec!["observability", "architecture", "microservices"],
+        ),
+        (
+            MemoryKind::Lesson,
+            "[demo] Feature flags should default to off in production",
+            "Shipped a half-built feature to production because the flag defaulted to true. \
+             Now every flag is off by default, requires explicit opt-in per environment, and \
+             has an owner + expiration date. Stale flags get cleaned up quarterly.",
+            0.8,
+            vec!["devops", "conventions", "production"],
+        ),
+    ];
+
+    let mut ids = Vec::new();
+    for (i, (kind, title, content, importance, tags)) in demos.iter().enumerate() {
+        let mut memory = Memory::new(
+            title.to_string(),
+            content.to_string(),
+            *kind,
+            user_id.to_string(),
+        );
+        memory.importance = *importance;
+        memory.tags = tags.iter().map(|t| t.to_string()).collect();
+
+        let embed_text = format!("{} {}", title, content);
+        let embedding = embedder.embed(&embed_text).await?;
+        storage
+            .save_memory(&memory, Some(&embedding))
+            .await
+            .with_context(|| format!("failed to save demo memory {}", i + 1))?;
+
+        history.log(
+            &MemoryEvent::new(memory.id, EventAction::Created, user_id.to_string())
+                .with_title(*title),
+        );
+
+        println!("  {} {}", format!("[{}/12]", i + 1).dimmed(), title.cyan());
+        ids.push(memory.id);
+    }
+
+    // 5 relations between demo memories
+    let relations: Vec<(usize, usize, RelationType, f32)> = vec![
+        (2, 1, RelationType::Fixes, 0.95),      // Fix fixes Error
+        (1, 3, RelationType::CausedBy, 0.8), // Error caused_by Pattern (pool issue from repo pattern)
+        (0, 9, RelationType::Related, 0.7),  // JWT decision related to SQLite/PG decision
+        (9, 0, RelationType::Contradicts, 0.5), // SQLite decision contradicts JWT (stateless vs local)
+        (11, 4, RelationType::Supersedes, 0.6), // Feature flag lesson supersedes onboarding observation
+    ];
+
+    println!("\n{}", "Creating relations...".cyan());
+    for (src_idx, tgt_idx, rel_type, strength) in &relations {
+        let relation = MemoryRelation {
+            source_id: ids[*src_idx],
+            target_id: ids[*tgt_idx],
+            relation_type: *rel_type,
+            strength: *strength,
+        };
+        storage.add_relation(&relation).await?;
+        println!(
+            "  {} {} → {}",
+            format!("{}", rel_type).magenta(),
+            demos[*src_idx].1.replace(DEMO_PREFIX, "").dimmed(),
+            demos[*tgt_idx].1.replace(DEMO_PREFIX, "").dimmed(),
+        );
+    }
+
+    println!(
+        "\n{} Created {} demo memories and {} relations.\n\nTry:\n  {} Browse interactively\n  {} Search from CLI",
+        "✓".green().bold(),
+        ids.len(),
+        relations.len(),
+        "shabka tui".cyan(),
+        "shabka search \"authentication\"".cyan(),
+    );
+
+    Ok(())
+}
+
+async fn demo_clean(storage: &Storage, history: &HistoryLogger, user_id: &str) -> Result<()> {
+    let timeline = storage
+        .timeline(&TimelineQuery {
+            limit: 500,
+            ..Default::default()
+        })
+        .await?;
+
+    let demo_entries: Vec<_> = timeline
+        .iter()
+        .filter(|e| e.title.starts_with(DEMO_PREFIX))
+        .collect();
+
+    if demo_entries.is_empty() {
+        println!("{}", "No demo memories found.".yellow());
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        format!("Removing {} demo memories...", demo_entries.len()).cyan()
+    );
+
+    for entry in &demo_entries {
+        storage.delete_memory(entry.id).await?;
+        history.log(
+            &MemoryEvent::new(entry.id, EventAction::Deleted, user_id.to_string())
+                .with_title(&entry.title),
+        );
+        println!("  {} {}", "×".red(), entry.title.dimmed());
+    }
+
+    println!(
+        "\n{} Removed {} demo memories.",
+        "✓".green().bold(),
+        demo_entries.len()
+    );
 
     Ok(())
 }

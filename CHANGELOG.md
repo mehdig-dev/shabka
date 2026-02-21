@@ -2,6 +2,16 @@
 
 All notable changes to Shabka are documented here.
 
+## [0.4.0] — 2026-02-21
+
+Launch readiness — distribution and onboarding.
+
+- **Interactive TUI** — `shabka tui` for browsing, searching, and inspecting memories (ratatui-based).
+- **`shabka demo`** — seed sample memories for instant first-run experience.
+- **Install script** — `curl -sSf ... | sh` for Linux/macOS.
+- **Release pipeline** — GitHub Actions cross-compiles for Linux, macOS (Intel + Apple Silicon), Windows.
+- **CI expanded** — tests all 5 crates on every push/PR.
+
 ## [0.3.0] — 2026-02-21
 
 SQLite as the default storage backend — zero external dependencies.

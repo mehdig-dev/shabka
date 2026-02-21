@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build shabka-cli
+        run: cargo build --release --no-default-features -p shabka-cli --target ${{ matrix.target }}
+
+      - name: Build shabka-mcp
+        run: cargo build --release --no-default-features -p shabka-mcp --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/shabka dist/
+          cp target/${{ matrix.target }}/release/shabka-mcp dist/
+          cd dist && tar czf ../shabka-${{ github.ref_name }}-${{ matrix.target }}.tar.gz *
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/shabka.exe dist/
+          cp target/${{ matrix.target }}/release/shabka-mcp.exe dist/
+          cd dist && 7z a ../shabka-${{ github.ref_name }}-${{ matrix.target }}.zip *
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shabka-${{ matrix.target }}
+          path: shabka-${{ github.ref_name }}-*
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum shabka-* > SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/shabka-*
+            artifacts/SHA256SUMS.txt

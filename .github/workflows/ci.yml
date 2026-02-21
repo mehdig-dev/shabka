@@ -35,5 +35,11 @@ jobs:
       - name: Unit tests (shabka-hooks)
         run: cargo test -p shabka-hooks --no-default-features
 
+      - name: Unit tests (shabka-cli)
+        run: cargo test -p shabka-cli --no-default-features
+
+      - name: Unit tests (shabka-mcp)
+        run: cargo test -p shabka-mcp --no-default-features
+
       - name: Build all crates
         run: cargo build --workspace --no-default-features
