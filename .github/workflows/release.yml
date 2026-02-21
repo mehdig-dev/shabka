@@ -47,11 +47,15 @@ jobs:
         run: cargo build --release --no-default-features -p shabka-cli --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          OPENSSL_VENDORED: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '1' || '' }}
 
       - name: Build shabka-mcp
         run: cargo build --release --no-default-features -p shabka-mcp --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          OPENSSL_VENDORED: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '1' || '' }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
