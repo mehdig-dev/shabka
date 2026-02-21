@@ -15,7 +15,7 @@
 
 LLMs forget everything between sessions. Shabka fixes that.
 
-Shabka is an MCP server that gives AI coding assistants persistent, searchable memory. It uses **SQLite by default** (zero setup) with optional [HelixDB](https://github.com/HelixDB/helix-db) for graph-vector features. Memories are stored with vector embeddings for semantic search and connected by typed relations for relationship-aware retrieval. **14 MCP tools**, a CLI, and a web dashboard included.
+Shabka is an MCP server that gives AI coding assistants persistent, searchable memory. It uses **SQLite by default** (zero setup) with optional [HelixDB](https://github.com/HelixDB/helix-db) for graph-vector features. Memories are stored with vector embeddings for semantic search and connected by typed relations for relationship-aware retrieval. **15 MCP tools**, a CLI, and a web dashboard included.
 
 ## Why Shabka?
 
@@ -23,6 +23,18 @@ Shabka is an MCP server that gives AI coding assistants persistent, searchable m
 - **Team knowledge sharing** — Share context across team members with privacy controls (public, team, private).
 - **Zero-effort capture** — Auto-captures insights from Claude Code sessions via hooks. No manual saving needed.
 - **Works everywhere** — MCP server for Claude/Cursor, plus a CLI and web dashboard for browsing and managing memories.
+
+## Works With
+
+| Client | Transport | Guide |
+|--------|-----------|-------|
+| Claude Code | stdio | [Setup](docs/clients/claude-code.md) |
+| Cursor | HTTP | [Setup](docs/clients/cursor.md) |
+| Windsurf | HTTP | [Setup](docs/clients/windsurf.md) |
+| Cline | stdio or HTTP | [Setup](docs/clients/cline.md) |
+| Continue | stdio | [Setup](docs/clients/continue.md) |
+
+Any MCP-capable client can connect via `shabka-mcp --http 8080`.
 
 ## Screenshots
 
@@ -58,7 +70,7 @@ claude mcp add shabka shabka-mcp
 
 ### Try it
 
-Open a new Claude Code session — the 14 Shabka tools are now available. Try:
+Open a new Claude Code session — the 15 Shabka tools are now available. Try:
 
 - *"Save a memory about how our auth system works"*
 - *"Search for authentication"*
@@ -124,7 +136,8 @@ Browse, search, and manage memories with markdown rendering, graph visualization
 | [Configuration](docs/configuration.md) | TOML config reference, embedding providers, `[storage]` backend selection |
 | [CLI Reference](docs/cli.md) | All commands and flags |
 | [Web Dashboard](docs/web-dashboard.md) | Dashboard features, REST API endpoints |
-| [API Reference](docs/api.md) | 14 MCP tools, REST API, retrieval patterns |
+| [API Reference](docs/api.md) | 15 MCP tools, REST API, retrieval patterns |
+| [Client Setup Guides](docs/clients/) | Claude Code, Cursor, Windsurf, Cline, Continue |
 | [Architecture](docs/architecture.md) | System diagram, workspace crates, project structure |
 | [Development](docs/development.md) | Build commands, testing, storage backends |
 

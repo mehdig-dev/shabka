@@ -2,6 +2,15 @@
 
 All notable changes to Shabka are documented here.
 
+## [0.5.0] — 2026-02-21
+
+MCP Ecosystem — wider client compatibility.
+
+- **Streamable HTTP transport** — `shabka-mcp --http [port]` for non-stdio clients (Cursor, Windsurf, etc.).
+- **MCP endpoint in web dashboard** — `/mcp` route serves the same 15 tools alongside the web UI.
+- **`save_session_summary` tool** — 15th MCP tool for batch-saving session learnings from any agent.
+- **Multi-client setup guides** — docs for Claude Code, Cursor, Windsurf, Cline, and Continue.
+
 ## [0.4.0] — 2026-02-21
 
 Launch readiness — distribution and onboarding.
@@ -52,6 +61,8 @@ Initial release — foundation for persistent LLM memory.
 - **Hybrid search** — keyword scoring fused with vector similarity in ranking formula.
 - **PII scrubbing** — regex-based redaction for exports (emails, API keys, IPs, file paths).
 
+[0.5.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.5.0
+[0.4.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.1.0
