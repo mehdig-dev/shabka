@@ -284,6 +284,17 @@ fn verification_to_str(verification: &VerificationStatus) -> String {
         .to_string()
 }
 
+/// Cosine similarity between two vectors. Returns 0.0 for zero-length vectors.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let mag_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if mag_a == 0.0 || mag_b == 0.0 {
+        return 0.0;
+    }
+    dot / (mag_a * mag_b)
+}
+
 // ── StorageBackend impl ─────────────────────────────────────────────────
 
 impl StorageBackend for SqliteStorage {
@@ -511,10 +522,95 @@ impl StorageBackend for SqliteStorage {
         .await
     }
 
-    // -- Search (stub) --
+    // -- Search --
 
-    async fn vector_search(&self, _embedding: &[f32], _limit: usize) -> Result<Vec<(Memory, f32)>> {
-        Ok(Vec::new())
+    async fn vector_search(&self, embedding: &[f32], limit: usize) -> Result<Vec<(Memory, f32)>> {
+        let query_vec = embedding.to_vec();
+
+        self.with_conn(move |conn| {
+            // 1. Load all embeddings
+            let mut stmt = conn
+                .prepare("SELECT memory_id, vector, dimensions FROM embeddings")
+                .map_err(|e| ShabkaError::Storage(format!("failed to prepare query: {e}")))?;
+
+            let mut scored: Vec<(String, f32)> = Vec::new();
+
+            let rows = stmt
+                .query_map([], |row| {
+                    let id: String = row.get(0)?;
+                    let blob: Vec<u8> = row.get(1)?;
+                    let dims: i64 = row.get(2)?;
+                    Ok((id, blob, dims))
+                })
+                .map_err(|e| ShabkaError::Storage(format!("failed to query embeddings: {e}")))?;
+
+            for row in rows {
+                let (id, blob, dims) = row.map_err(|e| {
+                    ShabkaError::Storage(format!("failed to read embedding row: {e}"))
+                })?;
+
+                // 2. Deserialize BLOB to Vec<f32>
+                if blob.len() != (dims as usize) * 4 {
+                    continue; // corrupted embedding
+                }
+                let stored: Vec<f32> = blob
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+
+                if stored.len() != query_vec.len() {
+                    continue; // dimension mismatch
+                }
+
+                // 3. Score
+                let score = cosine_similarity(&query_vec, &stored);
+                scored.push((id, score));
+            }
+
+            // 4. Sort and truncate
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(limit);
+
+            if scored.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            // 5. Fetch full Memory records
+            let ids: Vec<String> = scored.iter().map(|(id, _)| id.clone()).collect();
+            let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "SELECT * FROM memories WHERE id IN ({})",
+                placeholders.join(", ")
+            );
+            let params: Vec<&dyn rusqlite::types::ToSql> = ids
+                .iter()
+                .map(|s| s as &dyn rusqlite::types::ToSql)
+                .collect();
+
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| ShabkaError::Storage(format!("failed to prepare query: {e}")))?;
+            let mem_rows = stmt
+                .query_map(params.as_slice(), row_to_memory)
+                .map_err(|e| ShabkaError::Storage(format!("failed to query memories: {e}")))?;
+
+            let mut memory_map: std::collections::HashMap<String, Memory> =
+                std::collections::HashMap::new();
+            for row in mem_rows {
+                let mem = row
+                    .map_err(|e| ShabkaError::Storage(format!("failed to read memory row: {e}")))?;
+                memory_map.insert(mem.id.to_string(), mem);
+            }
+
+            // 6. Reassemble in score order
+            let results: Vec<(Memory, f32)> = scored
+                .into_iter()
+                .filter_map(|(id, score)| memory_map.remove(&id).map(|mem| (mem, score)))
+                .collect();
+
+            Ok(results)
+        })
+        .await
     }
 
     // -- Timeline (stub) --
@@ -761,5 +857,48 @@ mod tests {
         // Double-delete should also return NotFound
         let result = storage.delete_memory(id).await;
         assert!(matches!(result.unwrap_err(), ShabkaError::NotFound(_)));
+    }
+
+    // ── Vector search tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_vector_search() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let mut m1 = test_memory();
+        m1.title = "Rust patterns".to_string();
+        let emb1 = vec![1.0_f32, 0.0, 0.0];
+
+        let mut m2 = test_memory();
+        m2.title = "Rust lifetimes".to_string();
+        let emb2 = vec![0.9, 0.1, 0.0];
+
+        let mut m3 = test_memory();
+        m3.title = "Python basics".to_string();
+        let emb3 = vec![0.0, 0.0, 1.0];
+
+        storage.save_memory(&m1, Some(&emb1)).await.unwrap();
+        storage.save_memory(&m2, Some(&emb2)).await.unwrap();
+        storage.save_memory(&m3, Some(&emb3)).await.unwrap();
+
+        let query = vec![1.0_f32, 0.0, 0.0];
+        let results = storage.vector_search(&query, 2).await.unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0.title, "Rust patterns");
+        assert_eq!(results[1].0.title, "Rust lifetimes");
+        assert!(results[0].1 > 0.99);
+        assert!(results[1].1 > 0.9);
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_no_embeddings() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mem = test_memory();
+        storage.save_memory(&mem, None).await.unwrap();
+
+        let query = vec![1.0_f32, 0.0, 0.0];
+        let results = storage.vector_search(&query, 10).await.unwrap();
+        assert!(results.is_empty());
     }
 }
