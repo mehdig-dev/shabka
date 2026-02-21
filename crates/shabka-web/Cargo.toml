@@ -1,5 +1,6 @@
 [package]
 name = "shabka-web"
+publish = false
 description = "Web dashboard for Shabka — browse, search, and manage LLM memories"
 version.workspace = true
 edition.workspace = true

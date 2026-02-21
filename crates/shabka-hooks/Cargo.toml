@@ -1,5 +1,6 @@
 [package]
 name = "shabka-hooks"
+publish = false
 description = "Claude Code hooks for Shabka — auto-capture memories from coding sessions"
 version.workspace = true
 edition.workspace = true
