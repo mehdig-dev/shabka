@@ -1,6 +1,6 @@
 [package]
 name = "shabka-mcp"
-description = "MCP server for Shabka — 13 tools for LLM memory management"
+description = "MCP server for Shabka — 14 tools for LLM memory management"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

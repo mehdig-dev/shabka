@@ -1,6 +1,6 @@
 [package]
 name = "shabka-core"
-description = "Core library for Shabka — persistent LLM memory with embeddings, graph intelligence, trust scoring, and smart dedup"
+description = "Core library for Shabka — persistent LLM memory with SQLite/HelixDB storage, embeddings, graph intelligence, and trust scoring"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
