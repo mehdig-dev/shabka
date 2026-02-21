@@ -9,6 +9,10 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[lib]
+name = "shabka_mcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "shabka-mcp"
 path = "src/main.rs"
