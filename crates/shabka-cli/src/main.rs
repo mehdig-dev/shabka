@@ -15,7 +15,7 @@ use shabka_core::history::{EventAction, HistoryLogger, MemoryEvent};
 use shabka_core::model::*;
 use shabka_core::ranking::{self, RankCandidate, RankingWeights};
 use shabka_core::sharing;
-use shabka_core::storage::{HelixStorage, StorageBackend};
+use shabka_core::storage::{create_backend, Storage, StorageBackend};
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -230,7 +230,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             json,
             token_budget,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let embedder = EmbeddingService::from_config(&config.embedding)
                 .context("failed to create embedding service")?;
             cmd_search(
@@ -248,11 +248,11 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             .await
         }
         Cli::Get { id, json } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             cmd_get(&storage, &id, json).await
         }
         Cli::Status => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             cmd_status(&storage, config, user_id).await
         }
         Cli::Export {
@@ -261,7 +261,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             scrub,
             scrub_report,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let scrub_config = if scrub || scrub_report {
                 Some(config.scrub.clone())
             } else {
@@ -277,7 +277,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             .await
         }
         Cli::Import { path } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let embedder = EmbeddingService::from_config(&config.embedding)
                 .context("failed to create embedding service")?;
             let history = HistoryLogger::new(config.history.enabled);
@@ -289,7 +289,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             depth,
             json,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let depth = depth.unwrap_or(config.graph.max_chain_depth);
             cmd_chain(&storage, &id, relation, depth, json).await
         }
@@ -298,7 +298,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             dry_run,
             decay_importance,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let days = days.unwrap_or(config.graph.stale_days);
             let history = HistoryLogger::new(config.history.enabled);
             cmd_prune(&storage, &history, user_id, days, dry_run, decay_importance).await
@@ -312,7 +312,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             limit,
             json,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let embedder = if duplicates {
                 Some(
                     EmbeddingService::from_config(&config.embedding)
@@ -337,7 +337,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             min_age,
             json,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let embedder = EmbeddingService::from_config(&config.embedding)
                 .context("failed to create embedding service")?;
             let history = HistoryLogger::new(config.history.enabled);
@@ -360,7 +360,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             dry_run,
             force,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let embedder = EmbeddingService::from_config(&config.embedding)
                 .context("failed to create embedding service")?;
             cmd_reembed(
@@ -374,7 +374,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             .await
         }
         Cli::Verify { id, status } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let history = HistoryLogger::new(config.history.enabled);
             cmd_verify(&storage, &history, user_id, &id, &status).await
         }
@@ -387,7 +387,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             json,
             output,
         } => {
-            let storage = make_storage(config);
+            let storage = make_storage(config)?;
             let embedder = EmbeddingService::from_config(&config.embedding)
                 .context("failed to create embedding service")?;
             cmd_context_pack(
@@ -398,12 +398,8 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
     }
 }
 
-fn make_storage(config: &ShabkaConfig) -> HelixStorage {
-    HelixStorage::new(
-        Some(&config.helix.url),
-        Some(config.helix.port),
-        config.helix.api_key.as_deref(),
-    )
+fn make_storage(config: &ShabkaConfig) -> Result<Storage> {
+    create_backend(config).context("failed to create storage backend")
 }
 
 /// Format HelixDB connection errors with a user-friendly message.
@@ -567,16 +563,21 @@ async fn cmd_init(provider: &str, check_only: bool) -> Result<()> {
     println!("{}", "Initialized Shabka in .shabka/".green());
     println!("  {}   .shabka/config.toml", "Config:".dimmed());
     println!("  {} {}", "Provider:".dimmed(), provider.cyan());
+    println!("  {} {}", "Storage:".dimmed(), "sqlite".cyan());
     println!(
         "  {}",
         "Edit .shabka/config.local.toml for local overrides (gitignored)".dimmed()
     );
     println!();
     println!("{}", "Quick Start:".bold());
-    println!("  1. Start HelixDB:   {}", "just db".cyan());
-    println!("  2. Run MCP server:  {}", "just mcp".cyan());
     println!(
-        "  3. Open dashboard:  {} {}  {}",
+        "  {} {}",
+        "Note:".dimmed(),
+        "SQLite is the default storage — no HelixDB needed.".dimmed()
+    );
+    println!("  1. Run MCP server:  {}", "just mcp".cyan());
+    println!(
+        "  2. Open dashboard:  {} {}  {}",
         "just web".cyan(),
         "->".dimmed(),
         "http://localhost:37737".cyan()
@@ -590,7 +591,7 @@ async fn cmd_init(provider: &str, check_only: bool) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_search(
-    storage: &HelixStorage,
+    storage: &Storage,
     embedder: &EmbeddingService,
     user_id: &str,
     query: &str,
@@ -729,7 +730,7 @@ async fn cmd_search(
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_context_pack(
-    storage: &HelixStorage,
+    storage: &Storage,
     embedder: &EmbeddingService,
     user_id: &str,
     query: &str,
@@ -851,7 +852,7 @@ async fn cmd_context_pack(
 // ---------------------------------------------------------------------------
 
 /// Resolve a memory ID from a full UUID or short prefix.
-async fn resolve_memory_id(storage: &HelixStorage, id: &str) -> Result<Uuid> {
+async fn resolve_memory_id(storage: &Storage, id: &str) -> Result<Uuid> {
     if id.len() < 32 {
         let entries = storage
             .timeline(&TimelineQuery {
@@ -880,7 +881,7 @@ async fn resolve_memory_id(storage: &HelixStorage, id: &str) -> Result<Uuid> {
 // get
 // ---------------------------------------------------------------------------
 
-async fn cmd_get(storage: &HelixStorage, id: &str, json: bool) -> Result<()> {
+async fn cmd_get(storage: &Storage, id: &str, json: bool) -> Result<()> {
     let memory_id = resolve_memory_id(storage, id).await?;
 
     let memory = storage
@@ -981,7 +982,7 @@ async fn cmd_get(storage: &HelixStorage, id: &str, json: bool) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn cmd_verify(
-    storage: &HelixStorage,
+    storage: &Storage,
     history: &HistoryLogger,
     user_id: &str,
     id_str: &str,
@@ -1024,7 +1025,7 @@ async fn cmd_verify(
 // status
 // ---------------------------------------------------------------------------
 
-async fn cmd_status(storage: &HelixStorage, config: &ShabkaConfig, user_id: &str) -> Result<()> {
+async fn cmd_status(storage: &Storage, config: &ShabkaConfig, user_id: &str) -> Result<()> {
     println!("{}", "Shabka Status".bold());
     println!("  {}       {}", "User:".dimmed(), user_id);
 
@@ -1143,7 +1144,7 @@ struct ExportData {
 }
 
 async fn cmd_export(
-    storage: &HelixStorage,
+    storage: &Storage,
     output: &str,
     privacy: &str,
     scrub_config: Option<&shabka_core::scrub::ScrubConfig>,
@@ -1284,7 +1285,7 @@ async fn cmd_export(
 // ---------------------------------------------------------------------------
 
 async fn cmd_import(
-    storage: &HelixStorage,
+    storage: &Storage,
     embedder: &EmbeddingService,
     user_id: &str,
     path: &str,
@@ -1341,7 +1342,7 @@ async fn cmd_import(
 // ---------------------------------------------------------------------------
 
 async fn cmd_chain(
-    storage: &HelixStorage,
+    storage: &Storage,
     id: &str,
     relations: Option<Vec<String>>,
     depth: usize,
@@ -1455,7 +1456,7 @@ async fn cmd_chain(
 // ---------------------------------------------------------------------------
 
 async fn cmd_prune(
-    storage: &HelixStorage,
+    storage: &Storage,
     history: &HistoryLogger,
     user_id: &str,
     days: u64,
@@ -1655,7 +1656,7 @@ fn cmd_history(
 // ---------------------------------------------------------------------------
 
 async fn cmd_reembed(
-    storage: &HelixStorage,
+    storage: &Storage,
     embedder: &EmbeddingService,
     config: &EmbeddingConfig,
     batch_size: usize,
@@ -1807,7 +1808,7 @@ async fn cmd_reembed(
 // ---------------------------------------------------------------------------
 
 async fn cmd_assess(
-    storage: &HelixStorage,
+    storage: &Storage,
     embedder: Option<&EmbeddingService>,
     graph_config: &GraphConfig,
     limit: Option<usize>,
@@ -2084,7 +2085,7 @@ async fn cmd_doctor(config: &ShabkaConfig) -> Result<()> {
     let mut critical_fail = false;
 
     // 1. HelixDB connectivity
-    let storage = make_storage(config);
+    let storage = make_storage(config)?;
     let helix_ok = match storage
         .timeline(&TimelineQuery {
             limit: 1,
@@ -2258,7 +2259,7 @@ async fn cmd_doctor(config: &ShabkaConfig) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_consolidate(
-    storage: &HelixStorage,
+    storage: &Storage,
     embedder: &EmbeddingService,
     config: &ShabkaConfig,
     user_id: &str,

@@ -13,7 +13,7 @@ use shabka_core::config::{self, ShabkaConfig};
 use shabka_core::embedding::EmbeddingService;
 use shabka_core::model::{Memory, MemorySource};
 use shabka_core::sharing;
-use shabka_core::storage::{HelixStorage, StorageBackend};
+use shabka_core::storage::{create_backend, StorageBackend};
 use tracing::Level;
 
 use crate::event::{CaptureIntent, HookEvent};
@@ -245,11 +245,7 @@ async fn save_compressed_memories(
     }
 
     let embedding_service = EmbeddingService::from_config(&config.embedding)?;
-    let storage = HelixStorage::new(
-        Some(&config.helix.url),
-        Some(config.helix.port),
-        config.helix.api_key.as_deref(),
-    );
+    let storage = create_backend(config)?;
 
     let llm_service = if config.llm.enabled && config.graph.dedup_llm {
         shabka_core::llm::LlmService::from_config(&config.llm).ok()
@@ -487,11 +483,7 @@ fn save_memory_immediate(
         }
 
         let embedding_service = EmbeddingService::from_config(&config.embedding)?;
-        let storage = HelixStorage::new(
-            Some(&config.helix.url),
-            Some(config.helix.port),
-            config.helix.api_key.as_deref(),
-        );
+        let storage = create_backend(config)?;
 
         let llm_service = if config.llm.enabled && config.graph.dedup_llm {
             shabka_core::llm::LlmService::from_config(&config.llm).ok()

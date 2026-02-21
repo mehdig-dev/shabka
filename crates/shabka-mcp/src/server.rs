@@ -18,12 +18,12 @@ use shabka_core::llm::LlmService;
 use shabka_core::model::*;
 use shabka_core::ranking::{self, RankCandidate, RankingWeights};
 use shabka_core::sharing;
-use shabka_core::storage::{HelixStorage, StorageBackend};
+use shabka_core::storage::{create_backend, Storage, StorageBackend};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ShabkaServer {
-    storage: Arc<HelixStorage>,
+    storage: Arc<Storage>,
     embedder: Arc<EmbeddingService>,
     config: Arc<ShabkaConfig>,
     user_id: String,
@@ -354,11 +354,7 @@ impl ShabkaServer {
         let config = ShabkaConfig::load(Some(&std::env::current_dir()?))
             .unwrap_or_else(|_| ShabkaConfig::default_config());
 
-        let storage = HelixStorage::new(
-            Some(&config.helix.url),
-            Some(config.helix.port),
-            config.helix.api_key.as_deref(),
-        );
+        let storage = create_backend(&config)?;
 
         let embedder = EmbeddingService::from_config(&config.embedding)?;
         let user_id = config::resolve_user_id(&config.sharing);

@@ -8,10 +8,10 @@ use shabka_core::config::{self, ShabkaConfig};
 use shabka_core::embedding::EmbeddingService;
 use shabka_core::history::HistoryLogger;
 use shabka_core::llm::LlmService;
-use shabka_core::storage::HelixStorage;
+use shabka_core::storage::{create_backend, Storage};
 
 pub struct AppState {
-    pub storage: HelixStorage,
+    pub storage: Storage,
     pub embedding: EmbeddingService,
     pub config: ShabkaConfig,
     pub user_id: String,
@@ -30,11 +30,7 @@ async fn main() -> Result<()> {
 
     let config = ShabkaConfig::load(None).unwrap_or_else(|_| ShabkaConfig::default_config());
 
-    let storage = HelixStorage::new(
-        Some(&config.helix.url),
-        Some(config.helix.port),
-        config.helix.api_key.as_deref(),
-    );
+    let storage = create_backend(&config)?;
 
     let embedding = EmbeddingService::from_config(&config.embedding)?;
 

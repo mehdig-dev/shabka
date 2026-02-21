@@ -1,5 +1,5 @@
 use shabka_core::model::*;
-use shabka_core::storage::{HelixStorage, StorageBackend};
+use shabka_core::storage::{Storage, StorageBackend};
 
 /// Auto-create relations for a newly saved memory.
 ///
@@ -7,7 +7,7 @@ use shabka_core::storage::{HelixStorage, StorageBackend};
 /// 1. Session thread — link to previous memory from the same session
 /// 2. Same-file clustering — link file-change memories touching the same file
 /// 3. Error→Fix chains — link edits that follow recent errors mentioning the same file
-pub async fn auto_relate(storage: &HelixStorage, memory: &Memory, session_id: &str) {
+pub async fn auto_relate(storage: &Storage, memory: &Memory, session_id: &str) {
     // Fetch recent memories to match against
     let query = TimelineQuery {
         limit: 50,
@@ -58,7 +58,7 @@ pub async fn auto_relate(storage: &HelixStorage, memory: &Memory, session_id: &s
 
 /// Link to the most recent memory from the same session (sequential chain).
 async fn session_thread(
-    storage: &HelixStorage,
+    storage: &Storage,
     memory: &Memory,
     session_id: &str,
     candidates: &[Memory],
@@ -97,7 +97,7 @@ async fn session_thread(
 
 /// Link file-change memories that touch the same file.
 async fn same_file_cluster(
-    storage: &HelixStorage,
+    storage: &Storage,
     memory: &Memory,
     file_path: &str,
     candidates: &[Memory],
@@ -131,7 +131,7 @@ async fn same_file_cluster(
 /// Heuristic: if a recent Error memory's content mentions the same file
 /// or filename that was just edited, the edit probably fixes the error.
 async fn error_fix_chain(
-    storage: &HelixStorage,
+    storage: &Storage,
     memory: &Memory,
     file_path: Option<&str>,
     candidates: &[Memory],
