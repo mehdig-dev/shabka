@@ -31,10 +31,10 @@ Shabka is an MCP server that gives AI coding assistants persistent, searchable m
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Search](docs/screenshots/search.png) | ![Detail](docs/screenshots/detail.png) |
 | Memory list with kind filters | Filter by kind, tag, project | Markdown content, relations, metadata |
 
-| Knowledge Graph | Analytics | Interactive TUI |
-|:-:|:-:|:-:|
-| ![Graph](docs/screenshots/graph.png) | ![Analytics](docs/screenshots/analytics.png) | ![TUI](docs/screenshots/tui.png) |
-| Interactive graph visualization | Quality score, charts, stats | `shabka tui` — browse & search |
+| Knowledge Graph | Analytics |
+|:-:|:-:|
+| ![Graph](docs/screenshots/graph.png) | ![Analytics](docs/screenshots/analytics.png) |
+| Interactive graph visualization | Quality score, charts, stats |
 
 ## Quick Start
 
