@@ -25,6 +25,9 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+axum = { workspace = true }
+tokio-util = "0.7"
 
 [features]
 default = []
