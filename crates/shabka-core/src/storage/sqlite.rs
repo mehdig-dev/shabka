@@ -693,22 +693,154 @@ impl StorageBackend for SqliteStorage {
         .await
     }
 
-    // -- Graph (stubs) --
+    // -- Graph --
 
-    async fn add_relation(&self, _relation: &MemoryRelation) -> Result<()> {
-        Ok(())
+    async fn add_relation(&self, relation: &MemoryRelation) -> Result<()> {
+        let relation = relation.clone();
+        self.with_conn(move |conn| {
+            let rel_type = serde_json::to_string(&relation.relation_type)
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string();
+
+            conn.execute(
+                "INSERT OR REPLACE INTO relations (source_id, target_id, relation_type, strength)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    relation.source_id.to_string(),
+                    relation.target_id.to_string(),
+                    rel_type,
+                    relation.strength,
+                ],
+            )
+            .map_err(|e| ShabkaError::Storage(format!("failed to add relation: {e}")))?;
+            Ok(())
+        })
+        .await
     }
 
-    async fn get_relations(&self, _memory_id: Uuid) -> Result<Vec<MemoryRelation>> {
-        Ok(Vec::new())
+    async fn get_relations(&self, memory_id: Uuid) -> Result<Vec<MemoryRelation>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT source_id, target_id, relation_type, strength
+                     FROM relations
+                     WHERE source_id = ?1 OR target_id = ?1",
+                )
+                .map_err(|e| ShabkaError::Storage(format!("failed to prepare query: {e}")))?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![memory_id.to_string()], |row| {
+                    let source_str: String = row.get(0)?;
+                    let target_str: String = row.get(1)?;
+                    let rel_type_str: String = row.get(2)?;
+                    let strength: f32 = row.get(3)?;
+                    Ok((source_str, target_str, rel_type_str, strength))
+                })
+                .map_err(|e| ShabkaError::Storage(format!("failed to query relations: {e}")))?;
+
+            let mut relations = Vec::new();
+            for row in rows {
+                let (source_str, target_str, rel_type_str, strength) = row.map_err(|e| {
+                    ShabkaError::Storage(format!("failed to read relation row: {e}"))
+                })?;
+                relations.push(MemoryRelation {
+                    source_id: Uuid::parse_str(&source_str).unwrap_or_default(),
+                    target_id: Uuid::parse_str(&target_str).unwrap_or_default(),
+                    relation_type: serde_json::from_str(&format!("\"{rel_type_str}\""))
+                        .unwrap_or(RelationType::Related),
+                    strength,
+                });
+            }
+            Ok(relations)
+        })
+        .await
     }
 
-    async fn count_relations(&self, _memory_ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
-        Ok(Vec::new())
+    async fn count_relations(&self, memory_ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
+        if memory_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<String> = memory_ids.iter().map(|id| id.to_string()).collect();
+        self.with_conn(move |conn| {
+            let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "SELECT source_id, COUNT(*) as cnt FROM relations
+                 WHERE source_id IN ({})
+                 GROUP BY source_id",
+                placeholders.join(", ")
+            );
+            let params: Vec<&dyn rusqlite::types::ToSql> = ids
+                .iter()
+                .map(|s| s as &dyn rusqlite::types::ToSql)
+                .collect();
+
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| ShabkaError::Storage(format!("failed to prepare query: {e}")))?;
+            let rows = stmt
+                .query_map(params.as_slice(), |row| {
+                    let id_str: String = row.get(0)?;
+                    let count: i64 = row.get(1)?;
+                    Ok((id_str, count as usize))
+                })
+                .map_err(|e| ShabkaError::Storage(format!("failed to count relations: {e}")))?;
+
+            let mut counts = Vec::new();
+            for row in rows {
+                let (id_str, count) = row
+                    .map_err(|e| ShabkaError::Storage(format!("failed to read count row: {e}")))?;
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    counts.push((id, count));
+                }
+            }
+            Ok(counts)
+        })
+        .await
     }
 
-    async fn count_contradictions(&self, _memory_ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
-        Ok(Vec::new())
+    async fn count_contradictions(&self, memory_ids: &[Uuid]) -> Result<Vec<(Uuid, usize)>> {
+        if memory_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<String> = memory_ids.iter().map(|id| id.to_string()).collect();
+        self.with_conn(move |conn| {
+            let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "SELECT source_id, COUNT(*) as cnt FROM relations
+                 WHERE source_id IN ({}) AND relation_type = 'contradicts'
+                 GROUP BY source_id",
+                placeholders.join(", ")
+            );
+            let params: Vec<&dyn rusqlite::types::ToSql> = ids
+                .iter()
+                .map(|s| s as &dyn rusqlite::types::ToSql)
+                .collect();
+
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| ShabkaError::Storage(format!("failed to prepare query: {e}")))?;
+            let rows = stmt
+                .query_map(params.as_slice(), |row| {
+                    let id_str: String = row.get(0)?;
+                    let count: i64 = row.get(1)?;
+                    Ok((id_str, count as usize))
+                })
+                .map_err(|e| {
+                    ShabkaError::Storage(format!("failed to count contradictions: {e}"))
+                })?;
+
+            let mut counts = Vec::new();
+            for row in rows {
+                let (id_str, count) = row
+                    .map_err(|e| ShabkaError::Storage(format!("failed to read count row: {e}")))?;
+                if let Ok(id) = Uuid::parse_str(&id_str) {
+                    counts.push((id, count));
+                }
+            }
+            Ok(counts)
+        })
+        .await
     }
 
     // -- Session (stubs) --
@@ -726,8 +858,8 @@ impl StorageBackend for SqliteStorage {
 mod tests {
     use super::*;
     use crate::model::{
-        MemoryKind, MemoryPrivacy, MemoryScope, MemorySource, MemoryStatus, UpdateMemoryInput,
-        VerificationStatus,
+        MemoryKind, MemoryPrivacy, MemoryRelation, MemoryScope, MemorySource, MemoryStatus,
+        RelationType, UpdateMemoryInput, VerificationStatus,
     };
     use crate::storage::StorageBackend;
 
@@ -1024,5 +1156,106 @@ mod tests {
         let entries = storage.timeline(&query).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, m1.id);
+    }
+
+    // ── Graph tests ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_add_and_get_relations() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let m1 = test_memory();
+        let mut m2 = test_memory();
+        m2.title = "Related".to_string();
+
+        storage.save_memory(&m1, None).await.unwrap();
+        storage.save_memory(&m2, None).await.unwrap();
+
+        let relation = MemoryRelation {
+            source_id: m1.id,
+            target_id: m2.id,
+            relation_type: RelationType::Related,
+            strength: 0.8,
+        };
+        storage.add_relation(&relation).await.unwrap();
+
+        let relations = storage.get_relations(m1.id).await.unwrap();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].target_id, m2.id);
+        assert_eq!(relations[0].relation_type, RelationType::Related);
+        assert!((relations[0].strength - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_count_relations() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let m1 = test_memory();
+        let mut m2 = test_memory();
+        let mut m3 = test_memory();
+        m2.title = "Two".to_string();
+        m3.title = "Three".to_string();
+
+        storage.save_memory(&m1, None).await.unwrap();
+        storage.save_memory(&m2, None).await.unwrap();
+        storage.save_memory(&m3, None).await.unwrap();
+
+        storage
+            .add_relation(&MemoryRelation {
+                source_id: m1.id,
+                target_id: m2.id,
+                relation_type: RelationType::Related,
+                strength: 0.5,
+            })
+            .await
+            .unwrap();
+        storage
+            .add_relation(&MemoryRelation {
+                source_id: m1.id,
+                target_id: m3.id,
+                relation_type: RelationType::Fixes,
+                strength: 0.9,
+            })
+            .await
+            .unwrap();
+
+        let counts = storage.count_relations(&[m1.id, m2.id]).await.unwrap();
+        let m1_count = counts.iter().find(|(id, _)| *id == m1.id).map(|(_, c)| *c);
+        assert_eq!(m1_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_count_contradictions() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let m1 = test_memory();
+        let mut m2 = test_memory();
+        let mut m3 = test_memory();
+        m2.title = "Contradicted".to_string();
+        m3.title = "Related only".to_string();
+
+        storage.save_memory(&m1, None).await.unwrap();
+        storage.save_memory(&m2, None).await.unwrap();
+        storage.save_memory(&m3, None).await.unwrap();
+
+        storage
+            .add_relation(&MemoryRelation {
+                source_id: m1.id,
+                target_id: m2.id,
+                relation_type: RelationType::Contradicts,
+                strength: 0.9,
+            })
+            .await
+            .unwrap();
+        storage
+            .add_relation(&MemoryRelation {
+                source_id: m1.id,
+                target_id: m3.id,
+                relation_type: RelationType::Related,
+                strength: 0.5,
+            })
+            .await
+            .unwrap();
+
+        let counts = storage.count_contradictions(&[m1.id]).await.unwrap();
+        let m1_count = counts.iter().find(|(id, _)| *id == m1.id).map(|(_, c)| *c);
+        assert_eq!(m1_count, Some(1)); // Only contradictions, not related
     }
 }
