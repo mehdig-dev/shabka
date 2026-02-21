@@ -64,7 +64,7 @@ async fn run_http(port: u16) -> Result<()> {
 
     let app = axum::Router::new().nest_service("/mcp", mcp_service);
 
-    let addr = format!("0.0.0.0:{port}");
+    let addr = format!("127.0.0.1:{port}");
     tracing::info!("Listening on http://{addr}/mcp");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

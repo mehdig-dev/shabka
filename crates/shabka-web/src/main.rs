@@ -59,6 +59,7 @@ async fn main() -> Result<()> {
 
     // Build MCP HTTP service
     let ct = CancellationToken::new();
+    let ct_shutdown = ct.clone();
     let session_manager = Arc::new(LocalSessionManager::default());
     let mcp_config = StreamableHttpServerConfig {
         sse_keep_alive: Some(std::time::Duration::from_secs(30)),
@@ -82,7 +83,9 @@ async fn main() -> Result<()> {
     tracing::info!("MCP endpoint available at http://{addr}/mcp");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move { ct_shutdown.cancelled().await })
+        .await?;
 
     Ok(())
 }

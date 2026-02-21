@@ -6,9 +6,9 @@ Use this information when submitting to MCP registries (mcp.so, Smithery, etc.).
 
 - **Name:** Shabka
 - **Tagline:** Persistent memory for LLM coding agents
-- **Description:** 14-tool MCP server that gives AI coding agents persistent memory across sessions. Save decisions, track errors and fixes, search semantically, and build a knowledge graph that grows with your codebase.
+- **Description:** 15-tool MCP server that gives AI coding agents persistent memory across sessions. Save decisions, track errors and fixes, search semantically, and build a knowledge graph that grows with your codebase.
 - **Repository:** https://github.com/mehdig-dev/shabka
-- **License:** MIT
+- **License:** MIT OR Apache-2.0
 - **Categories:** memory, knowledge-management, developer-tools
 
 ## Installation
@@ -31,7 +31,7 @@ cargo install shabka-mcp
 claude mcp add shabka -- shabka-mcp
 ```
 
-## Tools (14)
+## Tools (15)
 
 | Tool | Description |
 |------|-------------|
@@ -49,6 +49,7 @@ claude mcp add shabka -- shabka-mcp
 | `assess` | Analyze memory quality and find issues |
 | `consolidate` | Merge similar memory clusters into summaries (requires LLM) |
 | `verify_memory` | Set verification status (verified, disputed, outdated) |
+| `save_session_summary` | Batch-save multiple session learnings in one call |
 
 ## Key Features
 
