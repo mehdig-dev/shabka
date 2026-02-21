@@ -26,3 +26,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+rmcp = { workspace = true }
+shabka-mcp = { path = "../shabka-mcp", default-features = false }
+tokio-util = "0.7"

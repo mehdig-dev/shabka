@@ -4,11 +4,16 @@ mod routes;
 use std::sync::Arc;
 
 use anyhow::Result;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
+use rmcp::transport::StreamableHttpService;
 use shabka_core::config::{self, ShabkaConfig};
 use shabka_core::embedding::EmbeddingService;
 use shabka_core::history::HistoryLogger;
 use shabka_core::llm::LlmService;
 use shabka_core::storage::{create_backend, Storage};
+use shabka_mcp::ShabkaServer;
+use tokio_util::sync::CancellationToken;
 
 pub struct AppState {
     pub storage: Storage,
@@ -52,12 +57,29 @@ async fn main() -> Result<()> {
         llm,
     });
 
+    // Build MCP HTTP service
+    let ct = CancellationToken::new();
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let mcp_config = StreamableHttpServerConfig {
+        sse_keep_alive: Some(std::time::Duration::from_secs(30)),
+        sse_retry: Some(std::time::Duration::from_secs(3)),
+        stateful_mode: true,
+        cancellation_token: ct,
+    };
+    let mcp_service = StreamableHttpService::new(
+        || ShabkaServer::new().map_err(std::io::Error::other),
+        session_manager,
+        mcp_config,
+    );
+
     let app = routes::router()
         .with_state(state)
+        .nest_service("/mcp", mcp_service)
         .layer(tower_http::cors::CorsLayer::permissive());
 
     let addr = format!("{}:{}", config.web.host, config.web.port);
     tracing::info!("shabka-web listening on http://{addr}");
+    tracing::info!("MCP endpoint available at http://{addr}/mcp");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
