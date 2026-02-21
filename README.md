@@ -6,9 +6,16 @@
 
 <p align="center">Persistent memory for LLM coding agents.<br>Save, search, and connect knowledge across AI sessions.</p>
 
+<p align="center">
+  <a href="https://github.com/mehdig-dev/shabka/actions"><img src="https://github.com/mehdig-dev/shabka/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://crates.io/crates/shabka-core"><img src="https://img.shields.io/crates/v/shabka-core.svg" alt="crates.io"></a>
+  <a href="https://docs.rs/shabka-core"><img src="https://docs.rs/shabka-core/badge.svg" alt="docs.rs"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License"></a>
+</p>
+
 LLMs forget everything between sessions. Shabka fixes that.
 
-Shabka is an MCP server backed by [HelixDB](https://github.com/HelixDB/helix-db) (a graph-vector database) that gives AI coding assistants persistent, searchable memory. Memories are stored as nodes with vector embeddings for semantic search, connected by typed edges for relationship-aware retrieval.
+Shabka is an MCP server that gives AI coding assistants persistent, searchable memory. It uses **SQLite by default** (zero setup) with optional [HelixDB](https://github.com/HelixDB/helix-db) for graph-vector features. Memories are stored with vector embeddings for semantic search and connected by typed relations for relationship-aware retrieval. **14 MCP tools**, a CLI, and a web dashboard included.
 
 ## Why Shabka?
 
@@ -31,39 +38,58 @@ Shabka is an MCP server backed by [HelixDB](https://github.com/HelixDB/helix-db)
 
 ## Quick Start
 
-### 1. Install HelixDB
+### 1. Install from crates.io
 
 ```bash
-# Build from source (required on Ubuntu 20.04 / WSL2)
-cargo install --git https://github.com/HelixDB/helix-db helix-cli
-
-# Or use the installer (Ubuntu 22.04+)
-curl -sSL https://install.helix-db.com | bash
+cargo install shabka-cli shabka-mcp
 ```
 
-### 2. Start HelixDB
+### 2. Register the MCP server
 
 ```bash
-cd helix && helix push dev
+claude mcp add shabka shabka-mcp
 ```
 
-### 3. Register the MCP server
+### 3. Try it
 
-```bash
-claude mcp add shabka -- cargo run --manifest-path /path/to/shabka/Cargo.toml -p shabka-mcp --no-default-features
-```
+Open a new Claude Code session — the 14 Shabka tools are now available. Try:
 
-Open a new Claude Code session — the 13 Shabka tools are now available. Try: *"Save a memory about how our auth system works"* or *"Search for authentication"*.
+- *"Save a memory about how our auth system works"*
+- *"Search for authentication"*
+- *"What do you remember about the database schema?"*
+
+That's it — SQLite storage works out of the box with zero configuration.
+
+<details>
+<summary><strong>Advanced: HelixDB backend</strong></summary>
+
+For graph-vector features (native vector search, graph traversals), you can switch to HelixDB:
+
+1. **Install HelixDB:**
+   ```bash
+   cargo install --git https://github.com/HelixDB/helix-db helix-cli
+   ```
+
+2. **Start the database:**
+   ```bash
+   cd helix && helix push dev
+   ```
+
+3. **Update config** (`~/.config/shabka/config.toml`):
+   ```toml
+   [storage]
+   backend = "helix"
+   ```
+
+</details>
 
 ## CLI Highlights
-
-Install with `cargo install --path crates/shabka-cli --no-default-features`.
 
 ```bash
 shabka search "auth tokens"           # Semantic + keyword hybrid search
 shabka get a1b2c3d4                   # View memory details (short ID prefix)
 shabka chain a1b2c3d4 --depth 3      # Follow relation chains
-shabka status                         # HelixDB health + memory count
+shabka status                         # Storage health + memory count
 shabka context-pack "project setup"   # Paste-ready context block for LLMs
 ```
 
@@ -81,12 +107,12 @@ Browse, search, and manage memories with markdown rendering, graph visualization
 
 | Document | Description |
 |----------|-------------|
-| [Configuration](docs/configuration.md) | TOML config reference, embedding providers, layered config |
+| [Configuration](docs/configuration.md) | TOML config reference, embedding providers, `[storage]` backend selection |
 | [CLI Reference](docs/cli.md) | All commands and flags |
 | [Web Dashboard](docs/web-dashboard.md) | Dashboard features, REST API endpoints |
-| [API Reference](docs/api.md) | MCP tools (13), REST API, retrieval patterns |
+| [API Reference](docs/api.md) | 14 MCP tools, REST API, retrieval patterns |
 | [Architecture](docs/architecture.md) | System diagram, workspace crates, project structure |
-| [Development](docs/development.md) | Build commands, testing, resetting HelixDB |
+| [Development](docs/development.md) | Build commands, testing, storage backends |
 
 ## License
 
