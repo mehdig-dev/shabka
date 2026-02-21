@@ -843,14 +843,63 @@ impl StorageBackend for SqliteStorage {
         .await
     }
 
-    // -- Session (stubs) --
+    // -- Session --
 
-    async fn save_session(&self, _session: &Session) -> Result<()> {
-        Ok(())
+    async fn save_session(&self, session: &Session) -> Result<()> {
+        let session = session.clone();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (id, project_id, started_at, ended_at, summary, memory_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    session.id.to_string(),
+                    session.project_id,
+                    session.started_at.to_rfc3339(),
+                    session.ended_at.map(|dt| dt.to_rfc3339()),
+                    session.summary,
+                    session.memory_count as i64,
+                ],
+            )
+            .map_err(|e| ShabkaError::Storage(format!("failed to save session: {e}")))?;
+            Ok(())
+        })
+        .await
     }
 
-    async fn get_session(&self, _id: Uuid) -> Result<Session> {
-        Err(ShabkaError::NotFound("not implemented".into()))
+    async fn get_session(&self, id: Uuid) -> Result<Session> {
+        self.with_conn(move |conn| {
+            conn.query_row(
+                "SELECT * FROM sessions WHERE id = ?1",
+                rusqlite::params![id.to_string()],
+                |row| {
+                    let id_str: String = row.get("id")?;
+                    let started_at_str: String = row.get("started_at")?;
+                    let ended_at_str: Option<String> = row.get("ended_at")?;
+                    let memory_count: i64 = row.get("memory_count")?;
+                    Ok(Session {
+                        id: uuid::Uuid::parse_str(&id_str).unwrap_or_default(),
+                        project_id: row.get("project_id")?,
+                        started_at: chrono::DateTime::parse_from_rfc3339(&started_at_str)
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                            .unwrap_or_default(),
+                        ended_at: ended_at_str.and_then(|s| {
+                            chrono::DateTime::parse_from_rfc3339(&s)
+                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                .ok()
+                        }),
+                        summary: row.get("summary")?,
+                        memory_count: memory_count as usize,
+                    })
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    ShabkaError::NotFound(format!("session {id}"))
+                }
+                _ => ShabkaError::Storage(format!("failed to get session: {e}")),
+            })
+        })
+        .await
     }
 }
 
@@ -1257,5 +1306,62 @@ mod tests {
         let counts = storage.count_contradictions(&[m1.id]).await.unwrap();
         let m1_count = counts.iter().find(|(id, _)| *id == m1.id).map(|(_, c)| *c);
         assert_eq!(m1_count, Some(1)); // Only contradictions, not related
+    }
+
+    // ── Session tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_save_and_get_session() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let session = Session {
+            id: Uuid::now_v7(),
+            project_id: Some("my-project".to_string()),
+            started_at: Utc::now(),
+            ended_at: None,
+            summary: Some("Test session".to_string()),
+            memory_count: 5,
+        };
+        storage.save_session(&session).await.unwrap();
+        let loaded = storage.get_session(session.id).await.unwrap();
+        assert_eq!(loaded.id, session.id);
+        assert_eq!(loaded.project_id, Some("my-project".to_string()));
+        assert_eq!(loaded.summary, Some("Test session".to_string()));
+        assert_eq!(loaded.memory_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_not_found() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let result = storage.get_session(Uuid::now_v7()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_save_session_upsert() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let id = Uuid::now_v7();
+        let session = Session {
+            id,
+            project_id: None,
+            started_at: Utc::now(),
+            ended_at: None,
+            summary: None,
+            memory_count: 0,
+        };
+        storage.save_session(&session).await.unwrap();
+
+        let updated = Session {
+            id,
+            project_id: None,
+            started_at: session.started_at,
+            ended_at: Some(Utc::now()),
+            summary: Some("Done".to_string()),
+            memory_count: 3,
+        };
+        storage.save_session(&updated).await.unwrap();
+
+        let loaded = storage.get_session(id).await.unwrap();
+        assert_eq!(loaded.summary, Some("Done".to_string()));
+        assert_eq!(loaded.memory_count, 3);
     }
 }
