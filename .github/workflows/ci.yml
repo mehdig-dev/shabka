@@ -15,7 +15,7 @@ jobs:
     name: Clippy + Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -40,6 +40,9 @@ jobs:
 
       - name: Unit tests (shabka-mcp)
         run: cargo test -p shabka-mcp --no-default-features
+
+      - name: Unit tests (shabka-web)
+        run: cargo test -p shabka-web --no-default-features
 
       - name: Build all crates
         run: cargo build --workspace --no-default-features
