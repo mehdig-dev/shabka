@@ -1,7 +1,5 @@
 # Web Dashboard
 
-[← Back to README](../README.md)
-
 ```bash
 just web   # Start on http://localhost:37737
 ```
@@ -20,7 +18,7 @@ just web   # Start on http://localhost:37737
 - **Keyboard shortcuts** — `Ctrl+K` or `/` to focus search
 - **REST API** — Full JSON API at `/api/v1/` for external integrations
 
-See [screenshots](screenshots/) for visual examples.
+See [screenshots](../screenshots/) for visual examples.
 
 ## REST API
 

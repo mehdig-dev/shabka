@@ -120,6 +120,18 @@ web-test-setup:
 # Start DB then run MCP server
 dev: db mcp
 
+# -- Docs --
+
+# Serve docs locally (live-reload)
+docs:
+    cp CHANGELOG.md docs/src/reference/changelog.md
+    mdbook serve docs
+
+# Build docs
+docs-build:
+    cp CHANGELOG.md docs/src/reference/changelog.md
+    mdbook build docs
+
 # Clean build artifacts
 clean:
     cargo clean

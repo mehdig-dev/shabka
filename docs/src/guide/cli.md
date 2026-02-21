@@ -1,7 +1,5 @@
 # CLI
 
-[← Back to README](../README.md)
-
 Install the CLI with `just cli-install` (or `cargo install --path crates/shabka-cli --no-default-features`).
 
 ```bash

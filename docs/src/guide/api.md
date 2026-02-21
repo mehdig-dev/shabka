@@ -1,7 +1,5 @@
 # API Reference
 
-[← Back to README](../README.md)
-
 ## MCP Tools
 
 Shabka exposes 13 tools via the MCP protocol:

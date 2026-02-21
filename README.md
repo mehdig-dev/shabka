@@ -28,11 +28,11 @@ Shabka is an MCP server that gives AI coding assistants persistent, searchable m
 
 | Client | Transport | Guide |
 |--------|-----------|-------|
-| Claude Code | stdio | [Setup](docs/clients/claude-code.md) |
-| Cursor | HTTP | [Setup](docs/clients/cursor.md) |
-| Windsurf | HTTP | [Setup](docs/clients/windsurf.md) |
-| Cline | stdio or HTTP | [Setup](docs/clients/cline.md) |
-| Continue | stdio | [Setup](docs/clients/continue.md) |
+| Claude Code | stdio | [Setup](docs/src/clients/claude-code.md) |
+| Cursor | HTTP | [Setup](docs/src/clients/cursor.md) |
+| Windsurf | HTTP | [Setup](docs/src/clients/windsurf.md) |
+| Cline | stdio or HTTP | [Setup](docs/src/clients/cline.md) |
+| Continue | stdio | [Setup](docs/src/clients/continue.md) |
 
 Any MCP-capable client can connect via `shabka-mcp --http 8080`.
 
@@ -40,12 +40,12 @@ Any MCP-capable client can connect via `shabka-mcp --http 8080`.
 
 | Dashboard | Search | Detail |
 |:-:|:-:|:-:|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Search](docs/screenshots/search.png) | ![Detail](docs/screenshots/detail.png) |
+| ![Dashboard](docs/src/screenshots/dashboard.png) | ![Search](docs/src/screenshots/search.png) | ![Detail](docs/src/screenshots/detail.png) |
 | Memory list with kind filters | Filter by kind, tag, project | Markdown content, relations, metadata |
 
 | Knowledge Graph | Analytics |
 |:-:|:-:|
-| ![Graph](docs/screenshots/graph.png) | ![Analytics](docs/screenshots/analytics.png) |
+| ![Graph](docs/src/screenshots/graph.png) | ![Analytics](docs/src/screenshots/analytics.png) |
 | Interactive graph visualization | Quality score, charts, stats |
 
 ## Quick Start
@@ -56,7 +56,13 @@ Any MCP-capable client can connect via `shabka-mcp --http 8080`.
 curl -sSf https://raw.githubusercontent.com/mehdig-dev/shabka/main/install.sh | sh
 ```
 
-### Option B: From crates.io
+### Option B: Homebrew (macOS / Linux)
+
+```bash
+brew install mehdig-dev/tap/shabka
+```
+
+### Option C: From crates.io
 
 ```bash
 cargo install shabka-cli shabka-mcp
@@ -119,7 +125,7 @@ shabka status                         # Storage health + memory count
 shabka context-pack "project setup"   # Paste-ready context block for LLMs
 ```
 
-See [docs/cli.md](docs/cli.md) for the full command reference.
+See [docs/src/guide/cli.md](docs/src/guide/cli.md) for the full command reference.
 
 ## Web Dashboard
 
@@ -127,19 +133,19 @@ See [docs/cli.md](docs/cli.md) for the full command reference.
 cargo run -p shabka-web --no-default-features   # http://localhost:37737
 ```
 
-Browse, search, and manage memories with markdown rendering, graph visualization, analytics, and dark/light theme. See [docs/web-dashboard.md](docs/web-dashboard.md).
+Browse, search, and manage memories with markdown rendering, graph visualization, analytics, and dark/light theme. See [docs/src/guide/web-dashboard.md](docs/src/guide/web-dashboard.md).
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Configuration](docs/configuration.md) | TOML config reference, embedding providers, `[storage]` backend selection |
-| [CLI Reference](docs/cli.md) | All commands and flags |
-| [Web Dashboard](docs/web-dashboard.md) | Dashboard features, REST API endpoints |
-| [API Reference](docs/api.md) | 15 MCP tools, REST API, retrieval patterns |
-| [Client Setup Guides](docs/clients/) | Claude Code, Cursor, Windsurf, Cline, Continue |
-| [Architecture](docs/architecture.md) | System diagram, workspace crates, project structure |
-| [Development](docs/development.md) | Build commands, testing, storage backends |
+| [Configuration](docs/src/getting-started/configuration.md) | TOML config reference, embedding providers, `[storage]` backend selection |
+| [CLI Reference](docs/src/guide/cli.md) | All commands and flags |
+| [Web Dashboard](docs/src/guide/web-dashboard.md) | Dashboard features, REST API endpoints |
+| [API Reference](docs/src/guide/api.md) | 15 MCP tools, REST API, retrieval patterns |
+| [Client Setup Guides](docs/src/clients/) | Claude Code, Cursor, Windsurf, Cline, Continue |
+| [Architecture](docs/src/reference/architecture.md) | System diagram, workspace crates, project structure |
+| [Development](docs/src/reference/development.md) | Build commands, testing, storage backends |
 
 ## License
 

@@ -1,7 +1,5 @@
 # Development
 
-[← Back to README](../README.md)
-
 ## Prerequisites
 
 - Rust 1.80+

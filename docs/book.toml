@@ -1,0 +1,14 @@
+[book]
+title = "Shabka Documentation"
+description = "Persistent memory for LLM coding agents"
+authors = ["mehdig-dev"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/mehdig-dev/shabka"
+edit-url-template = "https://github.com/mehdig-dev/shabka/edit/main/docs/{path}"
+no-section-label = true

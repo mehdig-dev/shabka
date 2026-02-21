@@ -1,7 +1,5 @@
 # Architecture
 
-[← Back to README](../README.md)
-
 ```
 ┌─────────────┐     stdio      ┌─────────────┐     HTTP      ┌─────────────┐
 │  Claude Code │◄──────────────►│  shabka-mcp │◄─────────────►│   HelixDB   │

@@ -1,7 +1,5 @@
 # Configuration
 
-[← Back to README](../README.md)
-
 Shabka uses layered TOML configuration: global (`~/.config/shabka/config.toml`), project (`.shabka/config.toml`), and local (`.shabka/config.local.toml`, gitignored).
 
 ```toml
