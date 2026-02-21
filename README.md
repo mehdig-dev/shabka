@@ -11,6 +11,7 @@
   <a href="https://crates.io/crates/shabka-core"><img src="https://img.shields.io/crates/v/shabka-core.svg" alt="crates.io"></a>
   <a href="https://docs.rs/shabka-core"><img src="https://docs.rs/shabka-core/badge.svg" alt="docs.rs"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License"></a>
+  <a href="https://mehdig-dev.github.io/shabka/"><img src="https://img.shields.io/badge/docs-mdbook-blue" alt="Docs"></a>
 </p>
 
 LLMs forget everything between sessions. Shabka fixes that.
