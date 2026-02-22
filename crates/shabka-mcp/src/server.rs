@@ -414,6 +414,24 @@ impl ShabkaServer {
         })
     }
 
+    #[cfg(test)]
+    pub fn new_test(storage: Storage, config: ShabkaConfig) -> anyhow::Result<Self> {
+        let embedder = EmbeddingService::from_config(&config.embedding)?;
+        let user_id = "test-user".to_string();
+        let history = HistoryLogger::new(true);
+
+        Ok(Self {
+            storage: Arc::new(storage),
+            embedder: Arc::new(embedder),
+            user_id,
+            history: Arc::new(history),
+            llm: None,
+            config: Arc::new(config),
+            tool_router: Self::tool_router(),
+            migration_checked: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
     // -- Layer 1: Index (compact search results, ~50-100 tokens each) --
 
     #[tool(
@@ -1957,5 +1975,456 @@ mod tests {
         assert!(json.contains("memories"));
         assert!(json.contains("session_context"));
         assert!(json.contains("project_id"));
+    }
+
+    // -- Tool handler integration tests --
+
+    use shabka_core::storage::{SqliteStorage, Storage};
+
+    fn test_server() -> ShabkaServer {
+        let storage = Storage::Sqlite(SqliteStorage::open_in_memory().unwrap());
+        let config = ShabkaConfig::default_config();
+        ShabkaServer::new_test(storage, config).unwrap()
+    }
+
+    /// Extract the text string from the first content item of a CallToolResult.
+    fn extract_text(result: &CallToolResult) -> &str {
+        match &result.content[0].raw {
+            RawContent::Text(t) => &t.text,
+            _ => panic!("expected text content"),
+        }
+    }
+
+    /// Helper: save a memory and return (server, id_string).
+    async fn save_test_memory(server: &ShabkaServer, suffix: &str) -> String {
+        let params = SaveMemoryParams {
+            title: format!("Test memory {suffix}"),
+            content: format!(
+                "Unique content for test memory {suffix} — {}",
+                Uuid::new_v4()
+            ),
+            kind: "observation".to_string(),
+            tags: vec!["test".to_string()],
+            importance: 0.7,
+            scope: None,
+            related_to: vec![],
+            privacy: None,
+            project_id: None,
+        };
+        let result = server.save_memory(Parameters(params)).await.unwrap();
+        let text = extract_text(&result);
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        json["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn test_save_memory() {
+        let server = test_server();
+        let params = SaveMemoryParams {
+            title: "JWT auth decision".to_string(),
+            content: "We chose JWT tokens for stateless authentication across microservices."
+                .to_string(),
+            kind: "decision".to_string(),
+            tags: vec!["auth".to_string(), "jwt".to_string()],
+            importance: 0.8,
+            scope: None,
+            related_to: vec![],
+            privacy: None,
+            project_id: None,
+        };
+        let result = server.save_memory(Parameters(params)).await;
+        assert!(result.is_ok(), "save_memory failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(json["id"].as_str().is_some(), "response should contain id");
+        assert_eq!(json["title"].as_str().unwrap(), "JWT auth decision");
+        assert_eq!(json["action"].as_str().unwrap(), "added");
+    }
+
+    #[tokio::test]
+    async fn test_save_memory_validation() {
+        let server = test_server();
+        let params = SaveMemoryParams {
+            title: "".to_string(),
+            content: "Some content here.".to_string(),
+            kind: "observation".to_string(),
+            tags: vec![],
+            importance: 0.5,
+            scope: None,
+            related_to: vec![],
+            privacy: None,
+            project_id: None,
+        };
+        let result = server.save_memory(Parameters(params)).await;
+        assert!(result.is_err(), "empty title should fail validation");
+    }
+
+    #[tokio::test]
+    async fn test_get_memories() {
+        let server = test_server();
+        let id = save_test_memory(&server, "get-memories-a").await;
+
+        let params = GetMemoriesParams {
+            ids: vec![id.clone()],
+        };
+        let result = server.get_memories(Parameters(params)).await;
+        assert!(result.is_ok(), "get_memories failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert_eq!(json.len(), 1);
+        assert_eq!(
+            json[0]["memory"]["id"].as_str().unwrap(),
+            id,
+            "returned memory ID should match"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_memories_not_found() {
+        let server = test_server();
+        let fake_id = Uuid::new_v4().to_string();
+        let params = GetMemoriesParams { ids: vec![fake_id] };
+        let result = server.get_memories(Parameters(params)).await;
+        // Handler returns ok with empty results for non-existent IDs
+        assert!(
+            result.is_ok(),
+            "get_memories should not error for missing IDs: {result:?}"
+        );
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert!(
+            json.is_empty(),
+            "should return empty array for non-existent ID"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_memory() {
+        let server = test_server();
+        let id = save_test_memory(&server, "update-target").await;
+
+        let params = UpdateMemoryParams {
+            id: id.clone(),
+            title: Some("Updated title for memory".to_string()),
+            content: None,
+            tags: None,
+            importance: None,
+            status: None,
+            privacy: None,
+        };
+        let result = server.update_memory(Parameters(params)).await;
+        assert!(result.is_ok(), "update_memory failed: {result:?}");
+
+        // Verify the update took effect
+        let get_params = GetMemoriesParams {
+            ids: vec![id.clone()],
+        };
+        let get_result = server.get_memories(Parameters(get_params)).await.unwrap();
+        let text = extract_text(&get_result);
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            json[0]["memory"]["title"].as_str().unwrap(),
+            "Updated title for memory"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_memory() {
+        let server = test_server();
+        let id = save_test_memory(&server, "delete-target").await;
+
+        let params = DeleteMemoryParams { id: id.clone() };
+        let result = server.delete_memory(Parameters(params)).await;
+        assert!(result.is_ok(), "delete_memory failed: {result:?}");
+
+        // Verify it's gone
+        let get_params = GetMemoriesParams {
+            ids: vec![id.clone()],
+        };
+        let get_result = server.get_memories(Parameters(get_params)).await.unwrap();
+        let text = extract_text(&get_result);
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert!(json.is_empty(), "deleted memory should not be returned");
+    }
+
+    #[tokio::test]
+    async fn test_search_empty() {
+        let server = test_server();
+        let params = SearchParams {
+            query: "nonexistent topic".to_string(),
+            kind: None,
+            project_id: None,
+            tags: vec![],
+            limit: 10,
+            token_budget: None,
+        };
+        let result = server.search(Parameters(params)).await;
+        assert!(
+            result.is_ok(),
+            "search on empty store should succeed: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_with_results() {
+        let server = test_server();
+        let _id = save_test_memory(&server, "searchable-alpha").await;
+
+        let params = SearchParams {
+            query: "searchable-alpha".to_string(),
+            kind: None,
+            project_id: None,
+            tags: vec![],
+            limit: 10,
+            token_budget: None,
+        };
+        let result = server.search(Parameters(params)).await;
+        assert!(result.is_ok(), "search failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert!(!json.is_empty(), "search should return at least one result");
+    }
+
+    #[tokio::test]
+    async fn test_timeline() {
+        let server = test_server();
+        let _id = save_test_memory(&server, "timeline-entry").await;
+
+        let params = TimelineParams {
+            memory_id: None,
+            start: None,
+            end: None,
+            session_id: None,
+            project_id: None,
+            limit: 10,
+            order_by: "created_at".to_string(),
+        };
+        let result = server.timeline(Parameters(params)).await;
+        assert!(result.is_ok(), "timeline failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert!(
+            !json.is_empty(),
+            "timeline should return at least one entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_history() {
+        let server = test_server();
+        // save_memory logs a Created event
+        let _id = save_test_memory(&server, "history-audit").await;
+
+        let params = HistoryParams {
+            memory_id: None,
+            limit: 20,
+        };
+        let result = server.history(Parameters(params)).await;
+        assert!(result.is_ok(), "history failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert!(
+            !json.is_empty(),
+            "history should have at least one event after saving"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_memory() {
+        let server = test_server();
+        let id = save_test_memory(&server, "verify-target").await;
+
+        let params = VerifyMemoryParams {
+            id: id.clone(),
+            status: "verified".to_string(),
+        };
+        let result = server.verify_memory(Parameters(params)).await;
+        assert!(result.is_ok(), "verify_memory failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        assert!(
+            text.contains("verified"),
+            "response should mention verified status"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_assess() {
+        let server = test_server();
+        let _id = save_test_memory(&server, "assess-target").await;
+
+        let params = AssessParams { limit: None };
+        let result = server.assess(Parameters(params)).await;
+        assert!(result.is_ok(), "assess failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(
+            json["total_memories"].as_u64().unwrap() >= 1,
+            "should assess at least 1 memory"
+        );
+        assert!(json["score"].is_number(), "should have a score");
+    }
+
+    #[tokio::test]
+    async fn test_get_context() {
+        let server = test_server();
+        let _id = save_test_memory(&server, "context-pack-entry").await;
+
+        let params = GetContextParams {
+            query: "context-pack-entry".to_string(),
+            project_id: None,
+            kind: None,
+            tags: None,
+            token_budget: 2000,
+        };
+        let result = server.get_context(Parameters(params)).await;
+        assert!(result.is_ok(), "get_context failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        // Context pack should contain markdown formatted output
+        assert!(!text.is_empty(), "context pack should not be empty");
+    }
+
+    #[tokio::test]
+    async fn test_reembed() {
+        let server = test_server();
+        let _id = save_test_memory(&server, "reembed-target").await;
+
+        let params = ReembedParams {
+            force: true,
+            batch_size: 10,
+        };
+        let result = server.reembed(Parameters(params)).await;
+        assert!(result.is_ok(), "reembed failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(
+            json["processed"].as_u64().unwrap() >= 1,
+            "should process at least 1 memory"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_relate_memories() {
+        let server = test_server();
+        let id1 = save_test_memory(&server, "relate-source").await;
+        let id2 = save_test_memory(&server, "relate-target").await;
+
+        let params = RelateMemoriesParams {
+            source_id: id1.clone(),
+            target_id: id2.clone(),
+            relation_type: "fixes".to_string(),
+            strength: 0.8,
+        };
+        let result = server.relate_memories(Parameters(params)).await;
+        assert!(result.is_ok(), "relate_memories failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        assert!(text.contains("Linked"), "response should mention linking");
+        assert!(
+            text.contains("fixes"),
+            "response should mention relation type"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_follow_chain() {
+        let server = test_server();
+        let id1 = save_test_memory(&server, "chain-start").await;
+        let id2 = save_test_memory(&server, "chain-end").await;
+
+        // Create a relation between them
+        let relate_params = RelateMemoriesParams {
+            source_id: id1.clone(),
+            target_id: id2.clone(),
+            relation_type: "related".to_string(),
+            strength: 0.6,
+        };
+        server
+            .relate_memories(Parameters(relate_params))
+            .await
+            .unwrap();
+
+        let params = FollowChainParams {
+            memory_id: id1.clone(),
+            relation_types: vec![],
+            max_depth: Some(3),
+        };
+        let result = server.follow_chain(Parameters(params)).await;
+        assert!(result.is_ok(), "follow_chain failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        // Should find the linked memory in the chain
+        let json: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+        assert!(
+            !json.is_empty(),
+            "follow_chain should return at least one linked memory"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_save_session_summary() {
+        let server = test_server();
+        let params = SaveSessionSummaryParams {
+            memories: vec![
+                SessionMemoryInput {
+                    title: "Session lesson alpha".to_string(),
+                    content: format!(
+                        "We learned about error handling patterns in this session — {}",
+                        Uuid::new_v4()
+                    ),
+                    kind: "lesson".to_string(),
+                    tags: vec!["session".to_string()],
+                    importance: 0.6,
+                },
+                SessionMemoryInput {
+                    title: "Session fix beta".to_string(),
+                    content: format!(
+                        "Fixed the authentication timeout bug by increasing TTL — {}",
+                        Uuid::new_v4()
+                    ),
+                    kind: "fix".to_string(),
+                    tags: vec!["session".to_string(), "auth".to_string()],
+                    importance: 0.8,
+                },
+            ],
+            session_context: Some("Testing session summary".to_string()),
+            project_id: None,
+        };
+        let result = server.save_session_summary(Parameters(params)).await;
+        assert!(result.is_ok(), "save_session_summary failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["saved"].as_u64().unwrap(), 2, "should save 2 memories");
+        assert_eq!(
+            json["total_submitted"].as_u64().unwrap(),
+            2,
+            "should report 2 submitted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_consolidate_no_llm() {
+        let server = test_server();
+        // Server has no LLM configured, so consolidate should return an error
+        let params = ConsolidateParams {
+            dry_run: false,
+            min_cluster_size: None,
+            min_age_days: None,
+        };
+        let result = server.consolidate(Parameters(params)).await;
+        assert!(
+            result.is_err(),
+            "consolidate without LLM should return error"
+        );
     }
 }
