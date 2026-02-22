@@ -79,8 +79,49 @@ pub fn access_score(
     ratio as f32
 }
 
+/// Compute the Damerau-Levenshtein distance between two strings.
+/// Handles insertions, deletions, substitutions, and transpositions.
+pub fn damerau_levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let n = a.len();
+    let m = b.len();
+
+    if n == 0 {
+        return m;
+    }
+    if m == 0 {
+        return n;
+    }
+
+    let mut d = vec![vec![0usize; m + 1]; n + 1];
+    for (i, row) in d.iter_mut().enumerate().take(n + 1) {
+        row[0] = i;
+    }
+    for (j, val) in d[0].iter_mut().enumerate().take(m + 1) {
+        *val = j;
+    }
+
+    for i in 1..=n {
+        for j in 1..=m {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            d[i][j] = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            // Transposition
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + cost);
+            }
+        }
+    }
+
+    d[n][m]
+}
+
 /// Keyword match score: fraction of query terms found in the memory's title + content.
-/// Case-insensitive. Returns 0.0 if no terms match, 1.0 if all match.
+/// Case-insensitive. Exact substring match scores 1.0 per term.
+/// If no exact match, fuzzy matching via Damerau-Levenshtein gives partial credit:
+/// distance 1 = 0.6, distance 2 = 0.3.
 pub fn keyword_score(query: &str, memory: &Memory) -> f32 {
     let terms: Vec<&str> = query.split_whitespace().collect();
     if terms.is_empty() {
@@ -94,12 +135,38 @@ pub fn keyword_score(query: &str, memory: &Memory) -> f32 {
         memory.tags.join(" ").to_lowercase(),
     );
 
-    let matched = terms
-        .iter()
-        .filter(|t| haystack.contains(&t.to_lowercase()))
-        .count();
+    let haystack_words: Vec<&str> = haystack.split_whitespace().collect();
 
-    matched as f32 / terms.len() as f32
+    let mut total_score = 0.0_f32;
+    for term in &terms {
+        let term_lower = term.to_lowercase();
+        if haystack.contains(&term_lower) {
+            // Exact substring match
+            total_score += 1.0;
+        } else {
+            // Fuzzy: check each haystack word
+            let mut best_credit = 0.0_f32;
+            for word in &haystack_words {
+                // Skip words with length difference > 2
+                let len_diff = (word.len() as isize - term_lower.len() as isize).unsigned_abs();
+                if len_diff > 2 {
+                    continue;
+                }
+                let dist = damerau_levenshtein(&term_lower, word);
+                let credit = match dist {
+                    1 => 0.6,
+                    2 => 0.3,
+                    _ => 0.0,
+                };
+                if credit > best_credit {
+                    best_credit = credit;
+                }
+            }
+            total_score += best_credit;
+        }
+    }
+
+    total_score / terms.len() as f32
 }
 
 /// Normalize relation count to 0.0-1.0 range.
@@ -291,6 +358,42 @@ mod tests {
         assert!((keyword_score("database migration", &mem) - 0.0).abs() < 0.01);
         // Empty query
         assert_eq!(keyword_score("", &mem), 0.0);
+    }
+
+    #[test]
+    fn test_damerau_levenshtein_basic() {
+        // Classic example: kitten → sitting = 3
+        assert_eq!(damerau_levenshtein("kitten", "sitting"), 3);
+        // Transposition: abc → acb = 1 (swap b,c)
+        assert_eq!(damerau_levenshtein("abc", "acb"), 1);
+        // Identical strings
+        assert_eq!(damerau_levenshtein("hello", "hello"), 0);
+        // Empty strings
+        assert_eq!(damerau_levenshtein("", "abc"), 3);
+        assert_eq!(damerau_levenshtein("abc", ""), 3);
+        assert_eq!(damerau_levenshtein("", ""), 0);
+        // Single character difference
+        assert_eq!(damerau_levenshtein("cat", "bat"), 1);
+    }
+
+    #[test]
+    fn test_keyword_score_fuzzy_typo() {
+        let mem = test_memory("Authentication flow with JWT tokens", 0.5, 1);
+        // "authentcation" is 1 edit from "authentication" → fuzzy credit 0.6
+        let score = keyword_score("authentcation", &mem);
+        assert!(score > 0.0, "fuzzy typo should score > 0, got {score}");
+        assert!(score < 1.0, "fuzzy typo should score < 1.0, got {score}");
+    }
+
+    #[test]
+    fn test_keyword_score_fuzzy_no_match() {
+        let mem = test_memory("Authentication flow with JWT tokens", 0.5, 1);
+        // "xyzzy" is too far from any word
+        let score = keyword_score("xyzzy", &mem);
+        assert!(
+            (score - 0.0).abs() < f32::EPSILON,
+            "unrelated word should score 0.0, got {score}"
+        );
     }
 
     #[test]
