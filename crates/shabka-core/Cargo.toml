@@ -28,6 +28,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
+sqlite-vec = "0.1.7-alpha"
 
 [features]
 default = []

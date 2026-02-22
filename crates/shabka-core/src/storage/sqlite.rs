@@ -5,9 +5,28 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+use std::sync::Once;
+
 use crate::error::{Result, ShabkaError};
 use crate::model::*;
 use crate::storage::StorageBackend;
+
+static EXTENSIONS_REGISTERED: Once = Once::new();
+
+fn register_extensions() {
+    EXTENSIONS_REGISTERED.call_once(|| unsafe {
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut i8,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> i32,
+        >(
+            sqlite_vec::sqlite3_vec_init as *const ()
+        )));
+    });
+}
 
 /// SQLite-backed storage for Shabka memories.
 ///
@@ -26,6 +45,7 @@ impl SqliteStorage {
     /// Sets WAL journal mode and enables foreign keys, then creates all
     /// tables and indexes if they don't already exist.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        register_extensions();
         let path = path.as_ref().to_path_buf();
         let conn = Connection::open(&path)
             .map_err(|e| ShabkaError::Storage(format!("failed to open SQLite database: {e}")))?;
@@ -35,6 +55,7 @@ impl SqliteStorage {
 
     /// Open an in-memory SQLite database (useful for tests).
     pub fn open_in_memory() -> Result<Self> {
+        register_extensions();
         let conn = Connection::open_in_memory().map_err(|e| {
             ShabkaError::Storage(format!("failed to open in-memory SQLite database: {e}"))
         })?;
@@ -933,6 +954,16 @@ mod tests {
             updated_at: Utc::now(),
             accessed_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn sqlite_vec_extension_loaded() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let conn = storage.conn.lock().unwrap();
+        let version: String = conn
+            .query_row("SELECT vec_version()", [], |row| row.get(0))
+            .unwrap();
+        assert!(!version.is_empty(), "sqlite-vec should report a version");
     }
 
     #[test]
