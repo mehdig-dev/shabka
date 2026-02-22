@@ -439,7 +439,7 @@ impl StorageBackend for SqliteStorage {
                 .map_err(|e| ShabkaError::Storage(format!("failed to begin transaction: {e}")))?;
 
             tx.execute(
-                "INSERT INTO memories (id, kind, title, content, summary, tags, source, scope,
+                "INSERT OR REPLACE INTO memories (id, kind, title, content, summary, tags, source, scope,
                     importance, status, privacy, verification, project_id, session_id,
                     created_by, created_at, updated_at, accessed_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
@@ -471,17 +471,25 @@ impl StorageBackend for SqliteStorage {
                 // Serialize f32 vec to little-endian bytes
                 let blob: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
                 tx.execute(
-                    "INSERT INTO embeddings (memory_id, vector, dimensions) VALUES (?1, ?2, ?3)",
+                    "INSERT OR REPLACE INTO embeddings (memory_id, vector, dimensions) VALUES (?1, ?2, ?3)",
                     params![memory.id.to_string(), blob, dimensions],
                 )
                 .map_err(|e| ShabkaError::Storage(format!("failed to insert embedding: {e}")))?;
 
-                // Also insert into vec_memories for sqlite-vec search
-                tx.execute(
+                // Best-effort upsert into vec_memories for sqlite-vec search.
+                // vec0 doesn't support OR REPLACE, so delete-then-insert.
+                // This may fail if dimensions changed (e.g. during reembed) —
+                // that's OK, vec_memories is rebuilt on next startup.
+                let _ = tx.execute(
+                    "DELETE FROM vec_memories WHERE memory_id = ?1",
+                    params![memory.id.to_string()],
+                );
+                if let Err(e) = tx.execute(
                     "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)",
                     params![memory.id.to_string(), blob],
-                )
-                .map_err(|e| ShabkaError::Storage(format!("failed to insert vec embedding: {e}")))?;
+                ) {
+                    tracing::debug!("vec_memories insert skipped (will rebuild on restart): {e}");
+                }
             }
 
             tx.commit()
