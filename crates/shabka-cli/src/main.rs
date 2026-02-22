@@ -199,25 +199,25 @@ enum Cli {
     Delete {
         /// Memory ID to delete (full UUID or short 8-char prefix)
         id: Option<String>,
-        /// Filter by memory kind (for bulk delete)
+        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo)
         #[arg(short, long)]
         kind: Option<String>,
-        /// Filter by project (for bulk delete)
+        /// Filter by project
         #[arg(short, long)]
         project: Option<String>,
-        /// Filter by status (for bulk delete)
+        /// Filter by status (active, archived, superseded)
         #[arg(short, long)]
         status: Option<String>,
-        /// Confirm bulk deletion without prompting
+        /// Required for bulk deletion (when using filters instead of a single ID)
         #[arg(long)]
         confirm: bool,
-        /// Output raw JSON
+        /// Output raw JSON instead of formatted text
         #[arg(long)]
         json: bool,
     },
     /// List memories with optional filters
     List {
-        /// Filter by memory kind
+        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo)
         #[arg(short, long)]
         kind: Option<String>,
         /// Filter by status (active, archived, superseded)
@@ -229,7 +229,7 @@ enum Cli {
         /// Maximum number of results
         #[arg(short, long, default_value = "20")]
         limit: usize,
-        /// Output raw JSON
+        /// Output raw JSON instead of table
         #[arg(long)]
         json: bool,
     },

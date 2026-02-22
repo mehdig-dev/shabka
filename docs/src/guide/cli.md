@@ -62,4 +62,19 @@ shabka context-pack [query]   # Generate paste-ready context from project memori
     --tag <tag>               # Filter by tag
     --json                    # JSON output instead of markdown
     -o <file>                 # Write to file instead of stdout
+
+shabka list                   # List memories with optional filters
+    --kind <kind>             # Filter by kind
+    --status <status>         # Filter by status (active, archived, superseded)
+    --project <name>          # Filter by project
+    --limit <n>               # Max results (default 20)
+    --json                    # JSON output instead of table
+
+shabka delete <memory-id>     # Delete a single memory by ID
+shabka delete --kind <kind> --confirm  # Bulk delete by filters
+    --kind <kind>             # Filter by kind
+    --project <name>          # Filter by project
+    --status <status>         # Filter by status
+    --confirm                 # Required for bulk deletion
+    --json                    # JSON output
 ```

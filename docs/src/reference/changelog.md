@@ -2,6 +2,24 @@
 
 All notable changes to Shabka are documented here.
 
+## [0.5.2] — 2026-02-22
+
+CLI management commands, fuzzy search, and test coverage expansion.
+
+- **`shabka list`** — browse memories with kind/status/project filters and table output.
+- **`shabka delete`** — single or bulk delete with `--confirm` safety guard.
+- **Fuzzy keyword search** — Damerau-Levenshtein distance scoring catches typos like "authentcation" → "authentication".
+- **434 tests** — 60 new unit tests across MCP (18), CLI (18), Web (14), Hooks (10) + 6 CLI integration tests.
+
+## [0.5.1] — 2026-02-22
+
+Storage performance and cross-platform fixes.
+
+- **sqlite-vec KNN search** — replaced brute-force cosine similarity with SIMD-accelerated KNN via the `sqlite-vec` extension.
+- **sqlean extensions** — registered `fuzzy`, `stats`, and `crypto` extensions for future fuzzy matching and analytics queries.
+- **Mixed-dimension handling** — `ensure_vec_table()` uses statistical mode to pick the dominant dimension.
+- **ARM64 cross-compilation fix** — use `std::ffi::c_char`/`c_int` in extension transmute.
+
 ## [0.5.0] — 2026-02-21
 
 MCP Ecosystem — wider client compatibility.
@@ -61,6 +79,8 @@ Initial release — foundation for persistent LLM memory.
 - **Hybrid search** — keyword scoring fused with vector similarity in ranking formula.
 - **PII scrubbing** — regex-based redaction for exports (emails, API keys, IPs, file paths).
 
+[0.5.2]: https://github.com/mehdig-dev/shabka/releases/tag/v0.5.2
+[0.5.1]: https://github.com/mehdig-dev/shabka/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.3.0
