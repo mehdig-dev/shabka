@@ -31,3 +31,7 @@ which = { workspace = true }
 reqwest = { workspace = true }
 ratatui = "0.30"
 crossterm = "0.29"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+uuid = { workspace = true }
