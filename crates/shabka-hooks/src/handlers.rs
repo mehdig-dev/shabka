@@ -457,4 +457,37 @@ mod tests {
             _ => panic!("expected Skip for Read tool"),
         }
     }
+
+    #[test]
+    fn test_classify_write_file_change() {
+        let mut event = make_event("PostToolUse");
+        event.tool_name = Some("Write".into());
+        event.tool_input = Some(serde_json::json!({
+            "file_path": "/home/user/project/config.toml",
+            "content": "[server]\nport = 8080"
+        }));
+
+        match classify(&event, false) {
+            CaptureIntent::Save {
+                kind,
+                title,
+                tags,
+                importance,
+                ..
+            } => {
+                assert_eq!(kind, MemoryKind::Decision);
+                assert!(
+                    title.starts_with("Write "),
+                    "Write tool title should start with 'Write ': {title}"
+                );
+                assert!(
+                    title.contains("config.toml"),
+                    "title should contain filename: {title}"
+                );
+                assert!(tags.contains(&"file-change".to_string()));
+                assert!((importance - 0.4).abs() < f32::EPSILON);
+            }
+            _ => panic!("expected Save for Write tool"),
+        }
+    }
 }

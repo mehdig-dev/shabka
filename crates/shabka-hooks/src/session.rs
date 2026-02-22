@@ -756,4 +756,43 @@ mod tests {
         let result = parse_llm_memories(response);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_compress_heuristic_no_events() {
+        // An empty slice of events should produce an empty vec of memories.
+        let events: Vec<BufferedEvent> = Vec::new();
+        let result = compress_heuristic(&events);
+        assert!(
+            result.is_empty(),
+            "compress_heuristic with no events should return empty vec"
+        );
+    }
+
+    #[test]
+    fn test_buffer_dedup_identical_content() {
+        let buf = temp_buffer("dedup-identical");
+        // Two events with identical title, content, AND event_type should be deduped
+        let event = BufferedEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            kind: MemoryKind::Decision,
+            title: "Edit auth.rs: fix login".into(),
+            content: "File modified via Edit: /src/auth.rs".into(),
+            importance: 0.4,
+            tags: vec!["auto-capture".into()],
+            file_path: Some("/src/auth.rs".into()),
+            event_type: "tool_use".into(),
+        };
+
+        buf.append(&event).unwrap();
+        buf.append(&event).unwrap(); // identical — should be skipped
+
+        let events = buf.read_all().unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "buffer should contain only 1 event after appending identical content twice"
+        );
+
+        buf.delete().unwrap();
+    }
 }

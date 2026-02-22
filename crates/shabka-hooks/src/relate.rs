@@ -221,4 +221,230 @@ mod tests {
         assert_eq!(basename("/home/user/project/src/main.rs"), "main.rs");
         assert_eq!(basename("main.rs"), "main.rs");
     }
+
+    #[test]
+    fn test_basename_extraction() {
+        assert_eq!(basename("src/auth.rs"), "auth.rs");
+        assert_eq!(basename("/a/b/c/foo.txt"), "foo.txt");
+        assert_eq!(basename("no_slash"), "no_slash");
+        assert_eq!(basename(""), "");
+    }
+
+    // -- Async tests requiring storage --
+
+    use shabka_core::storage::SqliteStorage;
+
+    fn make_memory(title: &str, content: &str, kind: MemoryKind, created_by: &str) -> Memory {
+        Memory::new(
+            title.to_string(),
+            content.to_string(),
+            kind,
+            created_by.to_string(),
+        )
+    }
+
+    fn test_storage() -> Storage {
+        Storage::Sqlite(SqliteStorage::open_in_memory().unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_session_thread_links_same_session() {
+        let storage = test_storage();
+        let session_id = "sess-123";
+
+        // Save an older memory that mentions the session and is from shabka-hooks
+        let mut older = make_memory(
+            "Previous memory",
+            &format!("Some work done session={session_id}"),
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        older.tags = vec!["auto-capture".to_string()];
+        storage.save_memory(&older, None).await.unwrap();
+
+        // Create a newer memory
+        let newer = make_memory(
+            "New memory",
+            "New work done",
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        storage.save_memory(&newer, None).await.unwrap();
+
+        // Call session_thread with the newer memory
+        let candidates = vec![older.clone()];
+        session_thread(&storage, &newer, session_id, &candidates).await;
+
+        // Verify relation was created (check from the older memory side)
+        let rels = storage.get_relations(older.id).await.unwrap();
+        assert!(
+            !rels.is_empty(),
+            "session_thread should create a relation from older to newer"
+        );
+        assert_eq!(rels[0].relation_type, RelationType::Related);
+    }
+
+    #[tokio::test]
+    async fn test_session_thread_skips_empty_session() {
+        let storage = test_storage();
+
+        let mem = make_memory(
+            "Some memory",
+            "content",
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        storage.save_memory(&mem, None).await.unwrap();
+
+        let candidates = vec![mem.clone()];
+        let newer = make_memory("Newer", "content2", MemoryKind::Decision, "shabka-hooks");
+        storage.save_memory(&newer, None).await.unwrap();
+
+        // Call with empty session_id — should be a no-op
+        session_thread(&storage, &newer, "", &candidates).await;
+
+        let rels = storage.get_relations(mem.id).await.unwrap();
+        assert!(
+            rels.is_empty(),
+            "session_thread with empty session_id should not create relations"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_same_file_cluster_links_edits() {
+        let storage = test_storage();
+
+        // Save a Decision memory whose content mentions auth.rs
+        let older = make_memory(
+            "Edit auth.rs",
+            "File modified via Edit: /src/auth.rs\n\nReplaced old code",
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        storage.save_memory(&older, None).await.unwrap();
+
+        // Create a newer memory editing the same file
+        let newer = make_memory(
+            "Edit auth.rs again",
+            "File modified via Edit: /src/auth.rs\n\nAdded new function",
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        storage.save_memory(&newer, None).await.unwrap();
+
+        let candidates = vec![older.clone()];
+        same_file_cluster(&storage, &newer, "/src/auth.rs", &candidates).await;
+
+        let rels = storage.get_relations(older.id).await.unwrap();
+        assert!(
+            !rels.is_empty(),
+            "same_file_cluster should create a relation for same-file edits"
+        );
+        assert_eq!(rels[0].relation_type, RelationType::Related);
+    }
+
+    #[tokio::test]
+    async fn test_error_fix_chain_links_error_to_fix() {
+        let storage = test_storage();
+
+        // Save an Error memory mentioning auth.rs
+        let error_mem = make_memory(
+            "Build failed in auth.rs",
+            "error[E0308]: mismatched types in auth.rs",
+            MemoryKind::Error,
+            "shabka-hooks",
+        );
+        storage.save_memory(&error_mem, None).await.unwrap();
+
+        // Create a Decision (fix) memory for the same file
+        let fix_mem = make_memory(
+            "Fix auth.rs types",
+            "File modified via Edit: /src/auth.rs\n\nFixed type mismatch",
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        storage.save_memory(&fix_mem, None).await.unwrap();
+
+        let candidates = vec![error_mem.clone()];
+        error_fix_chain(&storage, &fix_mem, Some("/src/auth.rs"), &candidates).await;
+
+        // The relation goes from fix_mem -> error_mem with type Fixes
+        let rels = storage.get_relations(fix_mem.id).await.unwrap();
+        assert!(
+            !rels.is_empty(),
+            "error_fix_chain should create a Fixes relation"
+        );
+        assert_eq!(rels[0].relation_type, RelationType::Fixes);
+        assert_eq!(rels[0].target_id, error_mem.id);
+    }
+
+    #[tokio::test]
+    async fn test_error_fix_chain_skips_no_file() {
+        let storage = test_storage();
+
+        let error_mem = make_memory(
+            "Some error",
+            "generic error output",
+            MemoryKind::Error,
+            "shabka-hooks",
+        );
+        storage.save_memory(&error_mem, None).await.unwrap();
+
+        let fix_mem = make_memory(
+            "Fix something",
+            "fixed it",
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        storage.save_memory(&fix_mem, None).await.unwrap();
+
+        let candidates = vec![error_mem.clone()];
+        // Call with None file_path — should return early
+        error_fix_chain(&storage, &fix_mem, None, &candidates).await;
+
+        let rels = storage.get_relations(fix_mem.id).await.unwrap();
+        assert!(
+            rels.is_empty(),
+            "error_fix_chain with no file_path should not create relations"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_relate_runs_all_strategies() {
+        let storage = test_storage();
+        let session_id = "sess-456";
+
+        // Save an Error memory mentioning config.rs
+        let mut error_mem = make_memory(
+            "Build error in config.rs",
+            "error: cannot find value `cfg` in config.rs",
+            MemoryKind::Error,
+            "shabka-hooks",
+        );
+        error_mem.tags = vec!["auto-capture".to_string()];
+        storage.save_memory(&error_mem, None).await.unwrap();
+
+        // Save a fix (Decision) memory for the same file, same session
+        let fix_mem = make_memory(
+            "Fix config.rs",
+            &format!(
+                "File modified via Edit: /src/config.rs\n\nFixed missing value session={session_id}"
+            ),
+            MemoryKind::Decision,
+            "shabka-hooks",
+        );
+        storage.save_memory(&fix_mem, None).await.unwrap();
+
+        // auto_relate should run all three strategies
+        auto_relate(&storage, &fix_mem, session_id).await;
+
+        // Check that at least one relation exists (error_fix_chain or session_thread)
+        let rels_fix = storage.get_relations(fix_mem.id).await.unwrap();
+        let rels_err = storage.get_relations(error_mem.id).await.unwrap();
+        let total = rels_fix.len() + rels_err.len();
+        assert!(
+            total >= 1,
+            "auto_relate should create at least one relation, got {total}"
+        );
+    }
 }
