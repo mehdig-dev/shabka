@@ -2873,3 +2873,496 @@ async fn demo_clean(storage: &Storage, history: &HistoryLogger, user_id: &str) -
 
     Ok(())
 }
+
+// ===========================================================================
+// Unit tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shabka_core::storage::SqliteStorage;
+
+    fn test_storage() -> Storage {
+        Storage::Sqlite(SqliteStorage::open_in_memory().unwrap())
+    }
+
+    fn test_config() -> ShabkaConfig {
+        ShabkaConfig::default_config()
+    }
+
+    fn test_embedder(config: &ShabkaConfig) -> EmbeddingService {
+        EmbeddingService::from_config(&config.embedding).unwrap()
+    }
+
+    fn test_history() -> HistoryLogger {
+        HistoryLogger::new(true)
+    }
+
+    /// Save a test memory and return its ID as a string.
+    async fn seed_memory(storage: &Storage, title: &str, content: &str, kind: &str) -> String {
+        let mem = Memory::new(
+            title.to_string(),
+            content.to_string(),
+            kind.parse().unwrap_or(MemoryKind::Observation),
+            "test-user".to_string(),
+        );
+        let id = mem.id;
+        let config = test_config();
+        let embedder = test_embedder(&config);
+        let embedding = embedder.embed(&mem.embedding_text()).await.ok();
+        storage
+            .save_memory(&mem, embedding.as_deref())
+            .await
+            .unwrap();
+        id.to_string()
+    }
+
+    // -----------------------------------------------------------------------
+    // search
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_search_no_results() {
+        let storage = test_storage();
+        let config = test_config();
+        let embedder = test_embedder(&config);
+        let result = cmd_search(
+            &storage,
+            &embedder,
+            "test-user",
+            "nonexistent query",
+            None,
+            None,
+            None,
+            None,
+            true,
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cmd_search_with_results() {
+        let storage = test_storage();
+        let config = test_config();
+        let embedder = test_embedder(&config);
+        seed_memory(
+            &storage,
+            "Rust borrow checker rules",
+            "The borrow checker enforces ownership and lifetime rules at compile time.",
+            "lesson",
+        )
+        .await;
+
+        let result = cmd_search(
+            &storage,
+            &embedder,
+            "test-user",
+            "borrow checker",
+            None,
+            Some(5),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cmd_search_json() {
+        let storage = test_storage();
+        let config = test_config();
+        let embedder = test_embedder(&config);
+        seed_memory(
+            &storage,
+            "JSON output test alpha",
+            "This memory tests the JSON output mode for search results.",
+            "observation",
+        )
+        .await;
+
+        let result = cmd_search(
+            &storage,
+            &embedder,
+            "test-user",
+            "json output",
+            None,
+            Some(5),
+            None,
+            None,
+            true,
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // get
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_get_found() {
+        let storage = test_storage();
+        let id = seed_memory(
+            &storage,
+            "Get test memory bravo",
+            "A memory used to test the get command with JSON output.",
+            "fact",
+        )
+        .await;
+        let result = cmd_get(&storage, &id, true).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cmd_get_not_found() {
+        let storage = test_storage();
+        let fake_id = uuid::Uuid::now_v7().to_string();
+        let result = cmd_get(&storage, &fake_id, true).await;
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // list
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_list_empty() {
+        let storage = test_storage();
+        let result = cmd_list(&storage, None, None, None, 20, true).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cmd_list_with_filter() {
+        let storage = test_storage();
+        seed_memory(
+            &storage,
+            "List filter decision charlie",
+            "A decision memory for testing list filters.",
+            "decision",
+        )
+        .await;
+        seed_memory(
+            &storage,
+            "List filter error delta",
+            "An error memory for testing list filters.",
+            "error",
+        )
+        .await;
+
+        // Filter to only decision kind
+        let result = cmd_list(&storage, Some("decision".to_string()), None, None, 20, true).await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // status
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_status() {
+        let storage = test_storage();
+        let config = test_config();
+        seed_memory(
+            &storage,
+            "Status test memory echo",
+            "This memory exists so that status has something to count.",
+            "observation",
+        )
+        .await;
+        let result = cmd_status(&storage, &config, "test-user").await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // delete
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_delete_single() {
+        let storage = test_storage();
+        let history = test_history();
+        let id = seed_memory(
+            &storage,
+            "Delete me foxtrot",
+            "A memory that will be deleted in this test.",
+            "observation",
+        )
+        .await;
+
+        let result = cmd_delete(
+            &storage,
+            &history,
+            "test-user",
+            Some(id),
+            None,
+            None,
+            None,
+            false,
+            true,
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cmd_delete_bulk_no_confirm() {
+        let storage = test_storage();
+        let history = test_history();
+        seed_memory(
+            &storage,
+            "Bulk delete golf",
+            "This memory should not actually be deleted since confirm is false.",
+            "error",
+        )
+        .await;
+
+        let result = cmd_delete(
+            &storage,
+            &history,
+            "test-user",
+            None,
+            Some("error".to_string()),
+            None,
+            None,
+            false, // no --confirm
+            true,
+        )
+        .await;
+        assert!(result.is_err(), "bulk delete without --confirm should fail");
+    }
+
+    // -----------------------------------------------------------------------
+    // verify
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_verify() {
+        let storage = test_storage();
+        let history = test_history();
+        let id = seed_memory(
+            &storage,
+            "Verify me hotel",
+            "A memory whose verification status will be changed.",
+            "fact",
+        )
+        .await;
+        let result = cmd_verify(&storage, &history, "test-user", &id, "verified").await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // history
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cmd_history() {
+        let history = test_history();
+        // cmd_history is sync; with no prior events it should print "no events"
+        let result = cmd_history(&history, None, 20, true);
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // prune
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_prune_dry_run() {
+        let storage = test_storage();
+        let history = test_history();
+        seed_memory(
+            &storage,
+            "Prune candidate india",
+            "A memory that might be pruned during a dry run test.",
+            "observation",
+        )
+        .await;
+
+        let result = cmd_prune(&storage, &history, "test-user", 90, true, false).await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // chain
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_chain_no_relations() {
+        let storage = test_storage();
+        let id = seed_memory(
+            &storage,
+            "Chain start juliet",
+            "An isolated memory with no relations for chain traversal.",
+            "pattern",
+        )
+        .await;
+
+        let result = cmd_chain(&storage, &id, None, 5, true).await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // export / import roundtrip
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_export_import_roundtrip() {
+        let storage = test_storage();
+        let config = test_config();
+        let embedder = test_embedder(&config);
+        let history = test_history();
+
+        seed_memory(
+            &storage,
+            "Export roundtrip kilo",
+            "This memory will be exported and then imported back.",
+            "lesson",
+        )
+        .await;
+
+        // Export to a temp file
+        let tmp_path =
+            std::env::temp_dir().join(format!("shabka-test-export-{}.json", uuid::Uuid::now_v7()));
+        let tmp_str = tmp_path.to_str().unwrap();
+
+        let export_result = cmd_export(&storage, tmp_str, "private", None, false).await;
+        assert!(export_result.is_ok(), "export failed: {:?}", export_result);
+
+        // Import into a fresh storage
+        let storage2 = test_storage();
+        let import_result = cmd_import(&storage2, &embedder, "test-user", tmp_str, &history).await;
+        assert!(import_result.is_ok(), "import failed: {:?}", import_result);
+
+        // Verify the imported memory exists
+        let entries = storage2
+            .timeline(&TimelineQuery {
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            !entries.is_empty(),
+            "imported storage should have at least one memory"
+        );
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    // -----------------------------------------------------------------------
+    // assess
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_assess() {
+        let storage = test_storage();
+        let config = test_config();
+        seed_memory(
+            &storage,
+            "Assess target lima",
+            "A memory to be assessed for quality issues.",
+            "observation",
+        )
+        .await;
+
+        let result = cmd_assess(&storage, None, &config.graph, None, false, true).await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // context-pack
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_context_pack() {
+        let storage = test_storage();
+        let config = test_config();
+        let embedder = test_embedder(&config);
+        seed_memory(
+            &storage,
+            "Context pack mike",
+            "A memory that should be included in the context pack.",
+            "preference",
+        )
+        .await;
+
+        let result = cmd_context_pack(
+            &storage,
+            &embedder,
+            "test-user",
+            "context",
+            2000,
+            None,
+            None,
+            None,
+            true,
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // demo
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cmd_demo_and_clean() {
+        let storage = test_storage();
+        let config = test_config();
+        let embedder = test_embedder(&config);
+        let history = test_history();
+
+        // Create demo data
+        let create_result = cmd_demo(&storage, &embedder, "test-user", &history, false).await;
+        assert!(
+            create_result.is_ok(),
+            "demo create failed: {:?}",
+            create_result
+        );
+
+        // Verify demo data exists
+        let entries = storage
+            .timeline(&TimelineQuery {
+                limit: 500,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            entries.iter().any(|e| e.title.starts_with(DEMO_PREFIX)),
+            "should have demo memories after demo create"
+        );
+
+        // Clean demo data
+        let clean_result = cmd_demo(&storage, &embedder, "test-user", &history, true).await;
+        assert!(
+            clean_result.is_ok(),
+            "demo clean failed: {:?}",
+            clean_result
+        );
+
+        // Verify demo data is gone
+        let entries_after = storage
+            .timeline(&TimelineQuery {
+                limit: 500,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            !entries_after
+                .iter()
+                .any(|e| e.title.starts_with(DEMO_PREFIX)),
+            "should have no demo memories after demo --clean"
+        );
+    }
+}
