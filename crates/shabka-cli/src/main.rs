@@ -1318,8 +1318,18 @@ async fn cmd_import(
 
     let mut imported_memories = 0;
     let mut imported_relations = 0;
+    let mut skipped_test = 0;
 
     for memory in &data.memories {
+        // Skip test data (integration tests tag titles with [test-...])
+        if memory.title.contains("[test-")
+            || memory.created_by == "integration-test"
+            || memory.project_id.as_deref() == Some("test")
+        {
+            skipped_test += 1;
+            continue;
+        }
+
         // Re-assign created_by to current user on import
         let mut m = memory.clone();
         m.created_by = user_id.to_string();
@@ -1348,6 +1358,9 @@ async fn cmd_import(
         imported_relations += 1;
     }
 
+    if skipped_test > 0 {
+        println!("Skipped {skipped_test} test memories");
+    }
     println!(
         "Imported {} memories and {} relations from {}",
         imported_memories, imported_relations, path
