@@ -149,6 +149,11 @@ impl SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_memories_session_id ON memories(session_id);
             CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
             CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
+                memory_id TEXT PRIMARY KEY,
+                embedding float[128]
+            );
             ",
         )
         .map_err(|e| ShabkaError::Storage(format!("failed to create tables: {e}")))?;
@@ -967,6 +972,20 @@ mod tests {
     }
 
     #[test]
+    fn vec_memories_table_created() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let conn = storage.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vec_memories'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "vec_memories virtual table should exist");
+    }
+
+    #[test]
     fn open_in_memory_creates_tables() {
         let storage = SqliteStorage::open_in_memory().expect("should open in-memory DB");
         assert_eq!(storage.path().to_str().unwrap(), ":memory:");
@@ -985,6 +1004,7 @@ mod tests {
         assert!(tables.contains(&"embeddings".to_string()));
         assert!(tables.contains(&"relations".to_string()));
         assert!(tables.contains(&"sessions".to_string()));
+        assert!(tables.contains(&"vec_memories".to_string()));
     }
 
     #[test]
