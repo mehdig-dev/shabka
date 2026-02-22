@@ -358,17 +358,6 @@ fn verification_to_str(verification: &VerificationStatus) -> String {
         .to_string()
 }
 
-/// Cosine similarity between two vectors. Returns 0.0 for zero-length vectors.
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let mag_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if mag_a == 0.0 || mag_b == 0.0 {
-        return 0.0;
-    }
-    dot / (mag_a * mag_b)
-}
-
 // ── StorageBackend impl ─────────────────────────────────────────────────
 
 impl StorageBackend for SqliteStorage {
@@ -609,85 +598,40 @@ impl StorageBackend for SqliteStorage {
         let query_vec = embedding.to_vec();
 
         self.with_conn(move |conn| {
-            // 1. Load all embeddings
-            let mut stmt = conn
-                .prepare("SELECT memory_id, vector, dimensions FROM embeddings")
-                .map_err(|e| ShabkaError::Storage(format!("failed to prepare query: {e}")))?;
+            // Serialize query vector to little-endian bytes for sqlite-vec
+            let query_blob: Vec<u8> = query_vec.iter().flat_map(|f| f.to_le_bytes()).collect();
 
-            let mut scored: Vec<(String, f32)> = Vec::new();
+            // KNN search via vec_memories, JOIN with memories for full records
+            let sql = "
+                SELECT m.*, v.distance
+                FROM vec_memories AS v
+                JOIN memories AS m ON m.id = v.memory_id
+                WHERE v.embedding MATCH ?1
+                  AND v.k = ?2
+                ORDER BY v.distance
+            ";
+
+            let mut stmt = conn
+                .prepare(sql)
+                .map_err(|e| ShabkaError::Storage(format!("failed to prepare vec search: {e}")))?;
 
             let rows = stmt
-                .query_map([], |row| {
-                    let id: String = row.get(0)?;
-                    let blob: Vec<u8> = row.get(1)?;
-                    let dims: i64 = row.get(2)?;
-                    Ok((id, blob, dims))
+                .query_map(params![query_blob, limit as i64], |row| {
+                    let mem = row_to_memory(row)?;
+                    let distance: f64 = row.get(18)?; // distance after 18 memories columns
+                    Ok((mem, distance))
                 })
-                .map_err(|e| ShabkaError::Storage(format!("failed to query embeddings: {e}")))?;
+                .map_err(|e| ShabkaError::Storage(format!("failed to execute vec search: {e}")))?;
 
+            let mut results = Vec::new();
             for row in rows {
-                let (id, blob, dims) = row.map_err(|e| {
-                    ShabkaError::Storage(format!("failed to read embedding row: {e}"))
+                let (mem, distance) = row.map_err(|e| {
+                    ShabkaError::Storage(format!("failed to read vec search row: {e}"))
                 })?;
-
-                // 2. Deserialize BLOB to Vec<f32>
-                if blob.len() != (dims as usize) * 4 {
-                    continue; // corrupted embedding
-                }
-                let stored: Vec<f32> = blob
-                    .chunks_exact(4)
-                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
-
-                if stored.len() != query_vec.len() {
-                    continue; // dimension mismatch
-                }
-
-                // 3. Score
-                let score = cosine_similarity(&query_vec, &stored);
-                scored.push((id, score));
+                // Convert L2 distance to similarity score: 1.0 for identical, ~0 for distant
+                let score = 1.0 / (1.0 + distance as f32);
+                results.push((mem, score));
             }
-
-            // 4. Sort and truncate
-            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            scored.truncate(limit);
-
-            if scored.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            // 5. Fetch full Memory records
-            let ids: Vec<String> = scored.iter().map(|(id, _)| id.clone()).collect();
-            let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
-            let sql = format!(
-                "SELECT * FROM memories WHERE id IN ({})",
-                placeholders.join(", ")
-            );
-            let params: Vec<&dyn rusqlite::types::ToSql> = ids
-                .iter()
-                .map(|s| s as &dyn rusqlite::types::ToSql)
-                .collect();
-
-            let mut stmt = conn
-                .prepare(&sql)
-                .map_err(|e| ShabkaError::Storage(format!("failed to prepare query: {e}")))?;
-            let mem_rows = stmt
-                .query_map(params.as_slice(), row_to_memory)
-                .map_err(|e| ShabkaError::Storage(format!("failed to query memories: {e}")))?;
-
-            let mut memory_map: std::collections::HashMap<String, Memory> =
-                std::collections::HashMap::new();
-            for row in mem_rows {
-                let mem = row
-                    .map_err(|e| ShabkaError::Storage(format!("failed to read memory row: {e}")))?;
-                memory_map.insert(mem.id.to_string(), mem);
-            }
-
-            // 6. Reassemble in score order
-            let results: Vec<(Memory, f32)> = scored
-                .into_iter()
-                .filter_map(|(id, score)| memory_map.remove(&id).map(|mem| (mem, score)))
-                .collect();
 
             Ok(results)
         })
@@ -1297,8 +1241,13 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0.title, "Rust patterns");
         assert_eq!(results[1].0.title, "Rust lifetimes");
-        assert!(results[0].1 > 0.99);
-        assert!(results[1].1 > 0.9);
+        // L2-based similarity: 1/(1+d). Exact match → 1.0, close match → high score.
+        assert!(
+            results[0].1 > results[1].1,
+            "first result should score higher than second"
+        );
+        assert!(results[0].1 > 0.9, "exact match should have high score");
+        assert!(results[1].1 > 0.5, "close match should have decent score");
     }
 
     #[tokio::test]
@@ -1307,7 +1256,9 @@ mod tests {
         let mem = test_memory();
         storage.save_memory(&mem, None).await.unwrap();
 
-        let query = vec![1.0_f32, 0.0, 0.0];
+        // Use 128-dimensional query to match vec_memories float[128] definition
+        let mut query = vec![0.0_f32; 128];
+        query[0] = 1.0;
         let results = storage.vector_search(&query, 10).await.unwrap();
         assert!(results.is_empty());
     }
