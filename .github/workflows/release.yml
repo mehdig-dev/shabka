@@ -19,14 +19,19 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            extra_features: ""
           - target: x86_64-apple-darwin
             os: macos-latest
+            extra_features: ""
           - target: aarch64-apple-darwin
             os: macos-latest
+            extra_features: ""
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            extra_features: "--features shabka-core/vendored-openssl"
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            extra_features: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -44,23 +49,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build shabka-cli
-        run: |
-          features=""
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            features="--features shabka-core/vendored-openssl"
-          fi
-          cargo build --release --no-default-features $features -p shabka-cli --target ${{ matrix.target }}
+        run: cargo build --release --no-default-features ${{ matrix.extra_features }} -p shabka-cli --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
 
       - name: Build shabka-mcp
-        run: |
-          features=""
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            features="--features shabka-core/vendored-openssl"
-          fi
-          cargo build --release --no-default-features $features -p shabka-mcp --target ${{ matrix.target }}
+        run: cargo build --release --no-default-features ${{ matrix.extra_features }} -p shabka-mcp --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
