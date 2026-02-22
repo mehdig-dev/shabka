@@ -40,9 +40,9 @@ fn register_extensions() {
             *const (),
             unsafe extern "C" fn(
                 *mut rusqlite::ffi::sqlite3,
-                *mut *mut i8,
+                *mut *mut std::ffi::c_char,
                 *const rusqlite::ffi::sqlite3_api_routines,
-            ) -> i32,
+            ) -> std::ffi::c_int,
         >(
             sqlite_vec::sqlite3_vec_init as *const ()
         )));
@@ -51,27 +51,27 @@ fn register_extensions() {
             *const (),
             unsafe extern "C" fn(
                 *mut rusqlite::ffi::sqlite3,
-                *mut *mut i8,
+                *mut *mut std::ffi::c_char,
                 *const rusqlite::ffi::sqlite3_api_routines,
-            ) -> i32,
+            ) -> std::ffi::c_int,
         >(sqlite3_fuzzy_init as *const ())));
         // sqlean: statistical aggregations
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
             *const (),
             unsafe extern "C" fn(
                 *mut rusqlite::ffi::sqlite3,
-                *mut *mut i8,
+                *mut *mut std::ffi::c_char,
                 *const rusqlite::ffi::sqlite3_api_routines,
-            ) -> i32,
+            ) -> std::ffi::c_int,
         >(sqlite3_stats_init as *const ())));
         // sqlean: cryptographic hashing
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
             *const (),
             unsafe extern "C" fn(
                 *mut rusqlite::ffi::sqlite3,
-                *mut *mut i8,
+                *mut *mut std::ffi::c_char,
                 *const rusqlite::ffi::sqlite3_api_routines,
-            ) -> i32,
+            ) -> std::ffi::c_int,
         >(sqlite3_crypto_init as *const ())));
     });
 }
