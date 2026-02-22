@@ -23,7 +23,7 @@
 ## Dev Commands
 
 - `just build` — build all crates
-- `just test` — run unit tests (274 tests)
+- `just test` — run unit tests (347 tests)
 - `just check` — clippy + tests
 - `just test-helix` — HelixDB integration tests (requires: `just db`)
 - `just test-ollama` — Ollama integration tests (requires: Ollama + HelixDB)
@@ -47,10 +47,10 @@
 | Crate          | Purpose                                                                                                                  |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `shabka-core`  | Data model, storage (HelixDB), embeddings, ranking, sharing, graph intelligence, decay/pruning, history audit trail, smart dedup, PII scrubbing, trust scoring |
-| `shabka-mcp`   | MCP server — 14 tools (search, get_memories, get_context, timeline, save/update/delete_memory, relate_memories, reembed, follow_chain, history, assess, consolidate, verify_memory) |
+| `shabka-mcp`   | MCP server — 15 tools (search, get_memories, get_context, timeline, save/update/delete_memory, relate_memories, reembed, follow_chain, history, assess, consolidate, verify_memory, save_session_summary) |
 | `shabka-hooks` | Auto-capture from Claude Code sessions via hooks (PostToolUse, Stop)                                                            |
 | `shabka-web`   | Web dashboard — Axum + Askama, graph visualization, CRUD, REST API (`/api/v1/`), analytics dashboard                            |
-| `shabka-cli`   | CLI — search, get, chain, prune, verify, history, status, export, import, init, reembed, consolidate, context-pack              |
+| `shabka-cli`   | CLI — search, get, chain, prune, verify, history, status, export, import, init, reembed, consolidate, context-pack, demo, tui   |
 
 ## Embedding Providers
 

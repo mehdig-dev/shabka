@@ -2,6 +2,16 @@
 
 All notable changes to Shabka are documented here.
 
+## [0.5.1] — 2026-02-22
+
+Storage performance and cross-platform fixes.
+
+- **sqlite-vec KNN search** — replaced brute-force cosine similarity with SIMD-accelerated KNN via the `sqlite-vec` extension.
+- **sqlean extensions** — registered `fuzzy`, `stats`, and `crypto` extensions for future fuzzy matching and analytics queries.
+- **Mixed-dimension handling** — `ensure_vec_table()` uses statistical mode to pick the dominant dimension, filters migration, and warns about mismatches.
+- **Idempotent save_memory** — `INSERT OR REPLACE` for memories/embeddings; delete-then-insert for vec0 virtual table. Enables `shabka reembed` without errors.
+- **ARM64 cross-compilation fix** — use `std::ffi::c_char`/`c_int` in extension transmute (ARM Linux defines `c_char` as `u8`, not `i8`).
+
 ## [0.5.0] — 2026-02-21
 
 MCP Ecosystem — wider client compatibility.
@@ -61,6 +71,7 @@ Initial release — foundation for persistent LLM memory.
 - **Hybrid search** — keyword scoring fused with vector similarity in ranking formula.
 - **PII scrubbing** — regex-based redaction for exports (emails, API keys, IPs, file paths).
 
+[0.5.1]: https://github.com/mehdig-dev/shabka/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mehdig-dev/shabka/releases/tag/v0.3.0

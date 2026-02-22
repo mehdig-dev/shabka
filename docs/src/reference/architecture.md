@@ -71,7 +71,7 @@ shabka/
     │   │   ├── context_pack.rs # Context pack builder + markdown formatter
     │   │   └── retry.rs    # Exponential backoff retry logic
     │   └── tests/          # Integration tests (HelixDB + Ollama)
-    ├── shabka-mcp/         # MCP server binary (rmcp 0.14)
+    ├── shabka-mcp/         # MCP server binary (rmcp 0.16)
     ├── shabka-hooks/       # Auto-capture + auto-relate
     ├── shabka-web/         # Web dashboard (Axum + Askama)
     │   └── src/routes/
