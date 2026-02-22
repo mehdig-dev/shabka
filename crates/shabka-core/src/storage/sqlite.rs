@@ -372,6 +372,13 @@ impl StorageBackend for SqliteStorage {
                     params![memory.id.to_string(), blob, dimensions],
                 )
                 .map_err(|e| ShabkaError::Storage(format!("failed to insert embedding: {e}")))?;
+
+                // Also insert into vec_memories for sqlite-vec search
+                tx.execute(
+                    "INSERT INTO vec_memories (memory_id, embedding) VALUES (?1, ?2)",
+                    params![memory.id.to_string(), blob],
+                )
+                .map_err(|e| ShabkaError::Storage(format!("failed to insert vec embedding: {e}")))?;
             }
 
             tx.commit()
@@ -1171,23 +1178,32 @@ mod tests {
     async fn test_vector_search() {
         let storage = SqliteStorage::open_in_memory().unwrap();
 
+        // Use 128-dimensional vectors to match vec_memories float[128] definition
+        let mut emb1 = vec![0.0_f32; 128];
+        emb1[0] = 1.0;
+
+        let mut emb2 = vec![0.0_f32; 128];
+        emb2[0] = 0.9;
+        emb2[1] = 0.1;
+
+        let mut emb3 = vec![0.0_f32; 128];
+        emb3[2] = 1.0;
+
         let mut m1 = test_memory();
         m1.title = "Rust patterns".to_string();
-        let emb1 = vec![1.0_f32, 0.0, 0.0];
 
         let mut m2 = test_memory();
         m2.title = "Rust lifetimes".to_string();
-        let emb2 = vec![0.9, 0.1, 0.0];
 
         let mut m3 = test_memory();
         m3.title = "Python basics".to_string();
-        let emb3 = vec![0.0, 0.0, 1.0];
 
         storage.save_memory(&m1, Some(&emb1)).await.unwrap();
         storage.save_memory(&m2, Some(&emb2)).await.unwrap();
         storage.save_memory(&m3, Some(&emb3)).await.unwrap();
 
-        let query = vec![1.0_f32, 0.0, 0.0];
+        let mut query = vec![0.0_f32; 128];
+        query[0] = 1.0;
         let results = storage.vector_search(&query, 2).await.unwrap();
 
         assert_eq!(results.len(), 2);
@@ -1378,6 +1394,40 @@ mod tests {
         assert_eq!(loaded.project_id, Some("my-project".to_string()));
         assert_eq!(loaded.summary, Some("Test session".to_string()));
         assert_eq!(loaded.memory_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_save_memory_writes_to_vec_memories() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mem = test_memory();
+        // vec_memories is defined with float[128], so use a 128-dimensional vector
+        let mut emb = vec![0.0_f32; 128];
+        emb[0] = 1.0;
+        storage.save_memory(&mem, Some(&emb)).await.unwrap();
+
+        let conn = storage.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "vec_memories should have one entry");
+
+        let stored_id: String = conn
+            .query_row("SELECT memory_id FROM vec_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored_id, mem.id.to_string());
+    }
+
+    #[tokio::test]
+    async fn test_save_memory_no_embedding_skips_vec() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mem = test_memory();
+        storage.save_memory(&mem, None).await.unwrap();
+
+        let conn = storage.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "vec_memories should be empty when no embedding");
     }
 
     #[tokio::test]
