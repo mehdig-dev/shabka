@@ -197,14 +197,80 @@ impl SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_memories_session_id ON memories(session_id);
             CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
             CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
-
-            CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-                memory_id TEXT PRIMARY KEY,
-                embedding float[128]
-            );
             ",
         )
         .map_err(|e| ShabkaError::Storage(format!("failed to create tables: {e}")))?;
+
+        // Create vec_memories with dimensions matching existing embeddings.
+        // vec0 requires a fixed dimension at creation time, so we detect it
+        // from stored embeddings or default to 128 (hash provider).
+        Self::ensure_vec_table(&conn)?;
+
+        Ok(())
+    }
+
+    /// Ensure the `vec_memories` virtual table exists with the correct
+    /// dimensions.  Detects the most common dimension from existing
+    /// embeddings (handles mixed providers), or defaults to 128 (hash).
+    /// Only migrates embeddings that match the chosen dimension — stale
+    /// embeddings from a previous provider are skipped (fixed by `reembed`).
+    fn ensure_vec_table(conn: &Connection) -> Result<()> {
+        // Pick the most common dimension across all stored embeddings.
+        // A real DB may contain mixed dims (e.g. 128 from hash + 768 from
+        // ollama) after switching providers.  We use the mode so the
+        // vec_memories table matches the majority of data.
+        let dims: i64 = conn
+            .query_row(
+                "SELECT dimensions FROM embeddings
+                 GROUP BY dimensions ORDER BY COUNT(*) DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(128);
+
+        // Always drop and recreate — vec_memories is a derived index,
+        // the embeddings table is the source of truth.
+        conn.execute_batch("DROP TABLE IF EXISTS vec_memories;")
+            .map_err(|e| ShabkaError::Storage(format!("failed to drop vec_memories: {e}")))?;
+
+        conn.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE vec_memories USING vec0(
+                memory_id TEXT PRIMARY KEY,
+                embedding float[{dims}]
+            );"
+        ))
+        .map_err(|e| ShabkaError::Storage(format!("failed to create vec_memories: {e}")))?;
+
+        // Only migrate embeddings that match the chosen dimension.
+        // Mismatched ones are stale from a previous provider switch
+        // and will be re-embedded via `shabka reembed`.
+        let migrated: usize = conn
+            .execute(
+                "INSERT INTO vec_memories (memory_id, embedding)
+                 SELECT memory_id, vector FROM embeddings
+                 WHERE dimensions = ?1",
+                [dims],
+            )
+            .map_err(|e| ShabkaError::Storage(format!("failed to populate vec_memories: {e}")))?;
+
+        if migrated > 0 {
+            // Check if any embeddings were skipped due to dimension mismatch.
+            let total: i64 = conn
+                .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
+                .unwrap_or(0);
+            let skipped = total - migrated as i64;
+
+            if skipped > 0 {
+                tracing::warn!(
+                    migrated,
+                    skipped,
+                    dims,
+                    "skipped embeddings with mismatched dimensions — run `shabka reembed` to fix"
+                );
+            } else {
+                tracing::info!(migrated, dims, "populated vec_memories from embeddings");
+            }
+        }
 
         Ok(())
     }
@@ -606,6 +672,31 @@ impl StorageBackend for SqliteStorage {
         let query_vec = embedding.to_vec();
 
         self.with_conn(move |conn| {
+            // Guard: detect the dimension vec_memories was built with by
+            // probing the first stored embedding's byte-length (4 bytes per f32).
+            // If vec_memories is empty or dimensions don't match the query,
+            // return empty — the user needs to `shabka reembed`.
+            let stored_dims: i64 = conn
+                .query_row(
+                    "SELECT length(embedding) / 4 FROM vec_memories LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            if stored_dims == 0 {
+                return Ok(Vec::new());
+            }
+
+            if stored_dims != query_vec.len() as i64 {
+                tracing::warn!(
+                    stored = stored_dims,
+                    query = query_vec.len(),
+                    "vector dimension mismatch — run `shabka reembed` to fix"
+                );
+                return Ok(Vec::new());
+            }
+
             // Serialize query vector to little-endian bytes for sqlite-vec
             let query_blob: Vec<u8> = query_vec.iter().flat_map(|f| f.to_le_bytes()).collect();
 
@@ -626,7 +717,7 @@ impl StorageBackend for SqliteStorage {
             let rows = stmt
                 .query_map(params![query_blob, limit as i64], |row| {
                     let mem = row_to_memory(row)?;
-                    let distance: f64 = row.get(18)?; // distance after 18 memories columns
+                    let distance: f64 = row.get("distance")?;
                     Ok((mem, distance))
                 })
                 .map_err(|e| ShabkaError::Storage(format!("failed to execute vec search: {e}")))?;

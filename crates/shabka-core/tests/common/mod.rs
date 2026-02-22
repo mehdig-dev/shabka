@@ -30,6 +30,7 @@ pub async fn ollama_available() -> bool {
 }
 
 /// Create a test memory with a unique UUID-tagged title to prevent collisions.
+/// Marked with `project_id = "test"` so test data can be easily filtered out.
 pub fn test_memory(title: &str, kind: MemoryKind) -> Memory {
     let unique_title = format!("{} [test-{}]", title, uuid::Uuid::now_v7());
     Memory::new(
@@ -38,6 +39,7 @@ pub fn test_memory(title: &str, kind: MemoryKind) -> Memory {
         kind,
         "integration-test".to_string(),
     )
+    .with_project("test".to_string())
 }
 
 /// Create a `HashEmbeddingProvider` (128d deterministic, no external deps).
