@@ -1132,6 +1132,216 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    // ── Page handler tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_not_found_handler() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/definitely-not-a-real-route")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_list_memories_page() {
+        let app = test_router();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_new_memory_form() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/memories/new")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_search_page() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/search?q=test")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_timeline_page() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/timeline")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_graph_page() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/graph")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_analytics_page() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/analytics")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ── Page/API tests with data ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_show_memory_page() {
+        let state = test_app_state();
+        let mem = shabka_core::model::Memory::new(
+            "Test page memory".to_string(),
+            "Unique page content for detail view".to_string(),
+            shabka_core::model::MemoryKind::Observation,
+            "test-user".to_string(),
+        );
+        let id = mem.id;
+        state.storage.save_memory(&mem, None).await.unwrap();
+
+        let app = crate::routes::router().with_state(state);
+        let req = Request::builder()
+            .uri(format!("/memories/{id}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_graph_data_json() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/graph/data")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert!(json["nodes"].is_array());
+        assert!(json["edges"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_memory_chain_api() {
+        let state = test_app_state();
+        let mem = shabka_core::model::Memory::new(
+            "Chain root".to_string(),
+            "Unique chain root content".to_string(),
+            shabka_core::model::MemoryKind::Observation,
+            "test-user".to_string(),
+        );
+        let id = mem.id;
+        state.storage.save_memory(&mem, None).await.unwrap();
+
+        let app = crate::routes::router().with_state(state);
+        let req = Request::builder()
+            .uri(format!("/api/memories/{id}/chain"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_api_get_relations() {
+        let state = test_app_state();
+        let mem = shabka_core::model::Memory::new(
+            "Relations target".to_string(),
+            "Unique relations target content".to_string(),
+            shabka_core::model::MemoryKind::Fact,
+            "test-user".to_string(),
+        );
+        let id = mem.id;
+        state.storage.save_memory(&mem, None).await.unwrap();
+
+        let app = crate::routes::router().with_state(state);
+        let req = Request::builder()
+            .uri(format!("/api/v1/memories/{id}/relations"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert!(json.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_api_get_history() {
+        let state = test_app_state();
+        let mem = shabka_core::model::Memory::new(
+            "History target".to_string(),
+            "Unique history target content".to_string(),
+            shabka_core::model::MemoryKind::Lesson,
+            "test-user".to_string(),
+        );
+        let id = mem.id;
+        state.storage.save_memory(&mem, None).await.unwrap();
+
+        let app = crate::routes::router().with_state(state);
+        let req = Request::builder()
+            .uri(format!("/api/v1/memories/{id}/history"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert!(json.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_bulk_archive() {
+        let app = test_router();
+        let body = serde_json::json!({ "ids": [] });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories/bulk/archive")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["processed"], 0);
+        assert_eq!(json["errors"], 0);
+    }
+
+    // ── Existing relation test ──────────────────────────────────────────
+
     #[tokio::test]
     async fn test_add_relation() {
         let state = test_app_state();
