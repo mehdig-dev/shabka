@@ -781,6 +781,16 @@ impl StorageBackend for SqliteStorage {
                 params.push(Box::new(project_id.clone()));
                 idx += 1;
             }
+            if let Some(ref kind) = query.kind {
+                conditions.push(format!("m.kind = ?{idx}"));
+                params.push(Box::new(kind_to_str(kind)));
+                idx += 1;
+            }
+            if let Some(ref status) = query.status {
+                conditions.push(format!("m.status = ?{idx}"));
+                params.push(Box::new(status_to_str(status)));
+                idx += 1;
+            }
 
             let where_clause = if conditions.is_empty() {
                 String::new()
@@ -1418,6 +1428,55 @@ mod tests {
         let entries = storage.timeline(&query).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, m1.id);
+    }
+
+    #[tokio::test]
+    async fn test_timeline_with_kind_filter() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let mut m1 = test_memory();
+        m1.kind = MemoryKind::Error;
+        m1.title = "Error memory".to_string();
+
+        let mut m2 = test_memory();
+        m2.kind = MemoryKind::Fix;
+        m2.title = "Fix memory".to_string();
+
+        storage.save_memory(&m1, None).await.unwrap();
+        storage.save_memory(&m2, None).await.unwrap();
+
+        let query = TimelineQuery {
+            kind: Some(MemoryKind::Error),
+            limit: 10,
+            ..Default::default()
+        };
+        let entries = storage.timeline(&query).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Error memory");
+    }
+
+    #[tokio::test]
+    async fn test_timeline_with_status_filter() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let mut m1 = test_memory();
+        m1.title = "Active memory".to_string();
+
+        let mut m2 = test_memory();
+        m2.status = MemoryStatus::Archived;
+        m2.title = "Archived memory".to_string();
+
+        storage.save_memory(&m1, None).await.unwrap();
+        storage.save_memory(&m2, None).await.unwrap();
+
+        let query = TimelineQuery {
+            status: Some(MemoryStatus::Archived),
+            limit: 10,
+            ..Default::default()
+        };
+        let entries = storage.timeline(&query).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Archived memory");
     }
 
     // ── Graph tests ──────────────────────────────────────────────────────

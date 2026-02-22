@@ -195,6 +195,44 @@ enum Cli {
         #[arg(short, long)]
         output: Option<String>,
     },
+    /// Delete one or more memories
+    Delete {
+        /// Memory ID to delete (full UUID or short 8-char prefix)
+        id: Option<String>,
+        /// Filter by memory kind (for bulk delete)
+        #[arg(short, long)]
+        kind: Option<String>,
+        /// Filter by project (for bulk delete)
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Filter by status (for bulk delete)
+        #[arg(short, long)]
+        status: Option<String>,
+        /// Confirm bulk deletion without prompting
+        #[arg(long)]
+        confirm: bool,
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List memories with optional filters
+    List {
+        /// Filter by memory kind
+        #[arg(short, long)]
+        kind: Option<String>,
+        /// Filter by status (active, archived, superseded)
+        #[arg(short, long)]
+        status: Option<String>,
+        /// Filter by project
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Maximum number of results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Launch interactive TUI for browsing memories
     Tui,
     /// Populate sample memories for demonstration
@@ -404,6 +442,31 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
                 &storage, &embedder, user_id, &query, tokens, project, kind, tag, json, output,
             )
             .await
+        }
+        Cli::Delete {
+            id,
+            kind,
+            project,
+            status,
+            confirm,
+            json,
+        } => {
+            let storage = make_storage(config)?;
+            let history = HistoryLogger::new(config.history.enabled);
+            cmd_delete(
+                &storage, &history, user_id, id, kind, project, status, confirm, json,
+            )
+            .await
+        }
+        Cli::List {
+            kind,
+            status,
+            project,
+            limit,
+            json,
+        } => {
+            let storage = make_storage(config)?;
+            cmd_list(&storage, kind, status, project, limit, json).await
         }
         Cli::Tui => tui::run_tui(config).await,
         Cli::Demo { clean } => {
@@ -2342,6 +2405,220 @@ async fn cmd_consolidate(
             result.memories_created,
         );
     }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// delete
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_delete(
+    storage: &Storage,
+    history: &HistoryLogger,
+    user_id: &str,
+    id: Option<String>,
+    kind: Option<String>,
+    project: Option<String>,
+    status: Option<String>,
+    confirm: bool,
+    json: bool,
+) -> Result<()> {
+    if let Some(ref id_str) = id {
+        // Single delete
+        let memory_id = resolve_memory_id(storage, id_str).await?;
+        let memory = storage
+            .get_memory(memory_id)
+            .await
+            .context("memory not found")?;
+        let title = memory.title.clone();
+        let kind_str = memory.kind.to_string();
+
+        storage
+            .delete_memory(memory_id)
+            .await
+            .context("failed to delete memory")?;
+
+        history.log(
+            &MemoryEvent::new(memory_id, EventAction::Deleted, user_id.to_string())
+                .with_title(&title),
+        );
+
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "deleted": memory_id.to_string(),
+                    "title": title,
+                    "kind": kind_str,
+                })
+            );
+        } else {
+            println!(
+                "{} {} ({}) [{}]",
+                "Deleted:".red(),
+                title,
+                memory_id.to_string()[..8].to_string().cyan(),
+                kind_str.magenta()
+            );
+        }
+    } else if kind.is_some() || project.is_some() || status.is_some() {
+        // Bulk delete with filters
+        if !confirm {
+            anyhow::bail!(
+                "bulk delete requires --confirm flag. Use filters (--kind, --project, --status) to select memories."
+            );
+        }
+
+        let query = TimelineQuery {
+            limit: 10000,
+            project_id: project,
+            ..Default::default()
+        };
+        let mut entries = storage
+            .timeline(&query)
+            .await
+            .context("failed to fetch timeline")?;
+
+        // Apply kind filter
+        if let Some(ref kind_str) = kind {
+            if let Ok(k) = kind_str.parse::<MemoryKind>() {
+                entries.retain(|e| e.kind == k);
+            } else {
+                anyhow::bail!("unknown memory kind: {kind_str}");
+            }
+        }
+
+        // Apply status filter
+        if let Some(ref status_str) = status {
+            let st: MemoryStatus = serde_json::from_str(&format!("\"{status_str}\""))
+                .map_err(|_| anyhow::anyhow!("unknown status: {status_str}"))?;
+            entries.retain(|e| e.status == st);
+        }
+
+        if entries.is_empty() {
+            if json {
+                println!("{}", serde_json::json!({ "deleted": 0 }));
+            } else {
+                println!("No matching memories found.");
+            }
+            return Ok(());
+        }
+
+        let mut deleted = 0usize;
+        for entry in &entries {
+            if storage.delete_memory(entry.id).await.is_ok() {
+                history.log(
+                    &MemoryEvent::new(entry.id, EventAction::Deleted, user_id.to_string())
+                        .with_title(&entry.title),
+                );
+                deleted += 1;
+            }
+        }
+
+        if json {
+            println!("{}", serde_json::json!({ "deleted": deleted }));
+        } else {
+            println!(
+                "{} {} memor{}",
+                "Deleted".red(),
+                deleted,
+                if deleted == 1 { "y" } else { "ies" }
+            );
+        }
+    } else {
+        anyhow::bail!(
+            "usage: shabka delete <ID> or shabka delete --kind <kind> --confirm\n\
+             Provide a memory ID for single delete, or use filters (--kind, --project, --status) with --confirm for bulk delete."
+        );
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// list
+// ---------------------------------------------------------------------------
+
+async fn cmd_list(
+    storage: &Storage,
+    kind: Option<String>,
+    status: Option<String>,
+    project: Option<String>,
+    limit: usize,
+    json: bool,
+) -> Result<()> {
+    let kind_filter = kind
+        .as_deref()
+        .map(|s| {
+            s.parse::<MemoryKind>()
+                .map_err(|_| anyhow::anyhow!("unknown memory kind: {s}"))
+        })
+        .transpose()?;
+
+    let status_filter = status
+        .as_deref()
+        .map(|s| {
+            serde_json::from_str::<MemoryStatus>(&format!("\"{s}\""))
+                .map_err(|_| anyhow::anyhow!("unknown status: {s}"))
+        })
+        .transpose()?;
+
+    let query = TimelineQuery {
+        limit,
+        project_id: project,
+        kind: kind_filter,
+        status: status_filter,
+        ..Default::default()
+    };
+
+    let entries = storage
+        .timeline(&query)
+        .await
+        .context("failed to fetch timeline")?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("No memories found.");
+        return Ok(());
+    }
+
+    // Table header
+    println!(
+        "  {}  {}  {}  {}  {}",
+        format!("{:<8}", "ID").dimmed(),
+        format!("{:<12}", "Kind").dimmed(),
+        format!("{:<5}", "Imp").dimmed(),
+        format!("{:<10}", "Date").dimmed(),
+        "Title".dimmed(),
+    );
+    println!("{}", "─".repeat(78).dimmed());
+
+    for entry in &entries {
+        let short_id = &entry.id.to_string()[..8];
+        let date = entry.created_at.format("%Y-%m-%d");
+        let imp = format!("{:.0}%", entry.importance * 100.0);
+        println!(
+            "  {}  {:<12}  {:<5}  {}  {}",
+            short_id.cyan(),
+            entry.kind.to_string().magenta(),
+            imp.dimmed(),
+            date,
+            entry.title,
+        );
+    }
+
+    println!("{}", "─".repeat(78).dimmed());
+    println!(
+        "  {} memor{}",
+        entries.len(),
+        if entries.len() == 1 { "y" } else { "ies" }
+    );
 
     Ok(())
 }

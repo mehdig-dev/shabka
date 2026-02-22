@@ -542,6 +542,7 @@ impl ShabkaServer {
             session_id: params.session_id.and_then(|s| Uuid::parse_str(&s).ok()),
             limit: params.limit,
             project_id: params.project_id,
+            ..Default::default()
         };
 
         let mut entries = self.storage.timeline(&query).await.map_err(to_mcp_error)?;

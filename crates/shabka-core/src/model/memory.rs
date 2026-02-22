@@ -437,6 +437,10 @@ pub struct TimelineQuery {
     pub limit: usize,
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub kind: Option<MemoryKind>,
+    #[serde(default)]
+    pub status: Option<MemoryStatus>,
 }
 
 impl Default for TimelineQuery {
@@ -448,6 +452,8 @@ impl Default for TimelineQuery {
             session_id: None,
             limit: default_limit(),
             project_id: None,
+            kind: None,
+            status: None,
         }
     }
 }
