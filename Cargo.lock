@@ -3108,10 +3108,12 @@ name = "shabka-core"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "cc",
  "chrono",
  "config",
  "dirs 6.0.0",
  "helix-rs",
+ "libsqlite3-sys",
  "openssl",
  "regex",
  "reqwest 0.13.2",
