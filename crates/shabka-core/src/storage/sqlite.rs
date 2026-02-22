@@ -13,8 +13,29 @@ use crate::storage::StorageBackend;
 
 static EXTENSIONS_REGISTERED: Once = Once::new();
 
+extern "C" {
+    fn sqlite3_fuzzy_init(
+        db: *mut rusqlite::ffi::sqlite3,
+        pz_err_msg: *mut *mut std::ffi::c_char,
+        p_api: *const rusqlite::ffi::sqlite3_api_routines,
+    ) -> std::ffi::c_int;
+
+    fn sqlite3_stats_init(
+        db: *mut rusqlite::ffi::sqlite3,
+        pz_err_msg: *mut *mut std::ffi::c_char,
+        p_api: *const rusqlite::ffi::sqlite3_api_routines,
+    ) -> std::ffi::c_int;
+
+    fn sqlite3_crypto_init(
+        db: *mut rusqlite::ffi::sqlite3,
+        pz_err_msg: *mut *mut std::ffi::c_char,
+        p_api: *const rusqlite::ffi::sqlite3_api_routines,
+    ) -> std::ffi::c_int;
+}
+
 fn register_extensions() {
     EXTENSIONS_REGISTERED.call_once(|| unsafe {
+        // sqlite-vec: vector search
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
             *const (),
             unsafe extern "C" fn(
@@ -25,6 +46,33 @@ fn register_extensions() {
         >(
             sqlite_vec::sqlite3_vec_init as *const ()
         )));
+        // sqlean: fuzzy string matching
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut i8,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> i32,
+        >(sqlite3_fuzzy_init as *const ())));
+        // sqlean: statistical aggregations
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut i8,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> i32,
+        >(sqlite3_stats_init as *const ())));
+        // sqlean: cryptographic hashing
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut i8,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> i32,
+        >(sqlite3_crypto_init as *const ())));
     });
 }
 
@@ -976,6 +1024,46 @@ mod tests {
             .query_row("SELECT vec_version()", [], |row| row.get(0))
             .unwrap();
         assert!(!version.is_empty(), "sqlite-vec should report a version");
+    }
+
+    #[test]
+    fn sqlean_fuzzy_loaded() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let conn = storage.conn.lock().unwrap();
+        let score: f64 = conn
+            .query_row("SELECT fuzzy_damlev('kitten', 'sitting')", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(score > 0.0, "fuzzy_damlev should return edit distance");
+    }
+
+    #[test]
+    fn sqlean_stats_loaded() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let conn = storage.conn.lock().unwrap();
+        let median: f64 = conn
+            .query_row(
+                "SELECT stats_median(value) FROM (SELECT 1 AS value UNION SELECT 2 UNION SELECT 3)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((median - 2.0).abs() < 0.01, "median of 1,2,3 should be 2");
+    }
+
+    #[test]
+    fn sqlean_crypto_loaded() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let conn = storage.conn.lock().unwrap();
+        let hash: String = conn
+            .query_row("SELECT hex(crypto_sha256('hello'))", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            hash.len(),
+            64,
+            "SHA-256 should produce 32 bytes (64 hex chars)"
+        );
     }
 
     #[test]
