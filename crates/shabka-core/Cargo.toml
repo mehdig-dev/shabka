@@ -27,6 +27,8 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
+openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [features]
 default = []
+vendored-openssl = ["openssl"]
