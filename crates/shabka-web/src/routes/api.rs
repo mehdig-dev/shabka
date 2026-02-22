@@ -804,6 +804,37 @@ async fn bulk_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use shabka_core::config::ShabkaConfig;
+    use shabka_core::embedding::EmbeddingService;
+    use shabka_core::history::HistoryLogger;
+    use shabka_core::storage::{SqliteStorage, Storage};
+    use tower::ServiceExt;
+
+    fn test_app_state() -> Arc<AppState> {
+        let storage = Storage::Sqlite(SqliteStorage::open_in_memory().unwrap());
+        let config = ShabkaConfig::default_config();
+        let embedding = EmbeddingService::from_config(&config.embedding).unwrap();
+        Arc::new(AppState {
+            storage,
+            embedding,
+            config,
+            user_id: "test-user".to_string(),
+            history: HistoryLogger::new(false),
+            llm: None,
+        })
+    }
+
+    fn test_router() -> axum::Router {
+        crate::routes::router().with_state(test_app_state())
+    }
+
+    async fn body_json(body: Body) -> serde_json::Value {
+        let bytes = body.collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
 
     #[test]
     fn test_create_request_serde() {
@@ -839,5 +870,308 @@ mod tests {
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("\"total_memories\":42"));
+    }
+
+    // ── API integration tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_memories_empty() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/api/v1/memories")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json.as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_and_get_memory() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create
+        let create_body = serde_json::json!({
+            "title": "Test memory",
+            "content": "Some content",
+            "kind": "observation"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(create_body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        let id = json["id"].as_str().unwrap().to_string();
+
+        // Get
+        let req = Request::builder()
+            .uri(format!("/api/v1/memories/{id}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["memory"]["title"], "Test memory");
+    }
+
+    #[tokio::test]
+    async fn test_update_memory() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create
+        let create_body = serde_json::json!({
+            "title": "Original title",
+            "content": "Original content",
+            "kind": "fact"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(create_body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let json = body_json(resp.into_body()).await;
+        let id = json["id"].as_str().unwrap().to_string();
+
+        // Update
+        let update_body = serde_json::json!({ "title": "Updated title" });
+        let req = Request::builder()
+            .method("PUT")
+            .uri(format!("/api/v1/memories/{id}"))
+            .header("content-type", "application/json")
+            .body(Body::from(update_body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["title"], "Updated title");
+    }
+
+    #[tokio::test]
+    async fn test_delete_memory() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create
+        let create_body = serde_json::json!({
+            "title": "To delete",
+            "content": "Will be removed",
+            "kind": "observation"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(create_body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let json = body_json(resp.into_body()).await;
+        let id = json["id"].as_str().unwrap().to_string();
+
+        // Delete
+        let req = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/v1/memories/{id}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Get should return 404
+        let req = Request::builder()
+            .uri(format!("/api/v1/memories/{id}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_search() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create a memory first
+        let create_body = serde_json::json!({
+            "title": "Rust borrowing rules",
+            "content": "The borrow checker enforces ownership",
+            "kind": "lesson"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(create_body.to_string()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        // Search
+        let req = Request::builder()
+            .uri("/api/v1/search?q=rust")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert!(json.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_timeline() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/api/v1/timeline")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert!(json.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_stats() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/api/v1/stats")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["total_memories"], 0);
+        assert_eq!(json["embedding_provider"], "hash");
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create two memories (different content to avoid dedup)
+        for (title, content) in &[
+            ("Bulk A", "First unique content about topic alpha"),
+            ("Bulk B", "Second unique content about topic beta"),
+        ] {
+            let body = serde_json::json!({
+                "title": title,
+                "content": content,
+                "kind": "fact"
+            });
+            let req = Request::builder()
+                .method("POST")
+                .uri("/api/v1/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            app.clone().oneshot(req).await.unwrap();
+        }
+
+        // List to get IDs
+        let req = Request::builder()
+            .uri("/api/v1/memories")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let json = body_json(resp.into_body()).await;
+        let ids: Vec<String> = json
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ids.len(), 2);
+
+        // Bulk delete
+        let bulk_body = serde_json::json!({ "ids": ids });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories/bulk/delete")
+            .header("content-type", "application/json")
+            .body(Body::from(bulk_body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["processed"], 2);
+        assert_eq!(json["errors"], 0);
+
+        // Verify empty
+        let req = Request::builder()
+            .uri("/api/v1/memories")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json.as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_validation_empty_title() {
+        let app = test_router();
+        let body = serde_json::json!({
+            "title": "",
+            "content": "content",
+            "kind": "fact"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_add_relation() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create two memories
+        let mut ids = Vec::new();
+        for title in &["Source", "Target"] {
+            let body = serde_json::json!({
+                "title": title,
+                "content": "content",
+                "kind": "fact"
+            });
+            let req = Request::builder()
+                .method("POST")
+                .uri("/api/v1/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            let json = body_json(resp.into_body()).await;
+            ids.push(json["id"].as_str().unwrap().to_string());
+        }
+
+        // Add relation
+        let rel_body = serde_json::json!({
+            "target_id": ids[1],
+            "relation_type": "related",
+            "strength": 0.7
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/v1/memories/{}/relate", ids[0]))
+            .header("content-type", "application/json")
+            .body(Body::from(rel_body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["source_id"], ids[0]);
+        assert_eq!(json["target_id"], ids[1]);
     }
 }
