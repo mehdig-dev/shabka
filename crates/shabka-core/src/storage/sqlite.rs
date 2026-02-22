@@ -579,6 +579,14 @@ impl StorageBackend for SqliteStorage {
     async fn delete_memory(&self, id: Uuid) -> Result<()> {
         let id_str = id.to_string();
         self.with_conn(move |conn| {
+            // Delete from vec_memories first — vec0 virtual tables don't support
+            // ON DELETE CASCADE, so we must clean up explicitly.
+            conn.execute(
+                "DELETE FROM vec_memories WHERE memory_id = ?1",
+                params![id_str],
+            )
+            .map_err(|e| ShabkaError::Storage(format!("failed to delete vec embedding: {e}")))?;
+
             let rows_affected = conn
                 .execute("DELETE FROM memories WHERE id = ?1", params![id_str])
                 .map_err(|e| ShabkaError::Storage(format!("failed to delete memory: {e}")))?;
@@ -1467,6 +1475,22 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM vec_memories", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0, "vec_memories should be empty when no embedding");
+    }
+
+    #[tokio::test]
+    async fn test_delete_memory_removes_vec_embedding() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mem = test_memory();
+        let emb = vec![0.5_f32; 128];
+        storage.save_memory(&mem, Some(&emb)).await.unwrap();
+
+        storage.delete_memory(mem.id).await.unwrap();
+
+        let conn = storage.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_memories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "vec_memories should be empty after delete");
     }
 
     #[tokio::test]
