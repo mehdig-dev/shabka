@@ -3,12 +3,14 @@ use std::sync::Arc;
 
 use askama::Template;
 use axum::extract::State;
-use axum::response::Html;
-use axum::routing::get;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{get, post};
 use axum::Router;
 use chrono::Utc;
 use shabka_core::assess::{self, AssessConfig, AssessmentResult, IssueCounts};
 use shabka_core::config::EmbeddingState;
+use shabka_core::history::{EventAction, MemoryEvent};
 use shabka_core::model::*;
 use shabka_core::storage::StorageBackend;
 use uuid::Uuid;
@@ -17,7 +19,9 @@ use crate::error::AppError;
 use crate::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
-    Router::new().route("/analytics", get(analytics_page))
+    Router::new()
+        .route("/analytics", get(analytics_page))
+        .route("/analytics/archive-stale", post(archive_stale))
 }
 
 #[derive(Template)]
@@ -45,6 +49,7 @@ struct AnalyticsTemplate {
 }
 
 struct QualityTopIssue {
+    id: Uuid,
     short_id: String,
     title: String,
     labels: String,
@@ -187,6 +192,7 @@ async fn analytics_page(State(state): State<Arc<AppState>>) -> Result<Html<Strin
         .map(|r| {
             let labels: Vec<&str> = r.issues.iter().map(|i| i.label()).collect();
             QualityTopIssue {
+                id: r.memory_id,
                 short_id: r.memory_id.to_string()[..8].to_string(),
                 title: r.title.clone(),
                 labels: labels.join(", "),
@@ -220,4 +226,58 @@ async fn analytics_page(State(state): State<Arc<AppState>>) -> Result<Html<Strin
     };
 
     Ok(Html(tmpl.render()?))
+}
+
+async fn archive_stale(State(state): State<Arc<AppState>>) -> Result<Response, AppError> {
+    let entries = state
+        .storage
+        .timeline(&TimelineQuery {
+            limit: 10000,
+            ..Default::default()
+        })
+        .await?;
+
+    let ids: Vec<Uuid> = entries.iter().map(|e| e.id).collect();
+    let memories = if ids.is_empty() {
+        vec![]
+    } else {
+        state.storage.get_memories(&ids).await.unwrap_or_default()
+    };
+
+    let now = Utc::now();
+    let stale_threshold = state.config.graph.stale_days as i64;
+
+    let stale_memories: Vec<&Memory> = memories
+        .iter()
+        .filter(|m| {
+            m.status == MemoryStatus::Active && (now - m.accessed_at).num_days() >= stale_threshold
+        })
+        .collect();
+
+    let mut archived = 0usize;
+    for m in &stale_memories {
+        let input = UpdateMemoryInput {
+            status: Some(MemoryStatus::Archived),
+            ..Default::default()
+        };
+        if state.storage.update_memory(m.id, &input).await.is_ok() {
+            state.history.log(
+                &MemoryEvent::new(m.id, EventAction::Archived, state.user_id.clone())
+                    .with_title(&m.title),
+            );
+            archived += 1;
+        }
+    }
+
+    let html = format!(
+        "<div style=\"font-size:2rem;font-weight:700;color:var(--success)\">0</div>\
+         <div style=\"color:var(--text-dim);font-size:0.85rem\">Stale</div>\
+         <div style=\"font-size:0.75rem;color:var(--success);margin-top:0.25rem\">Archived {} memories</div>",
+        archived
+    );
+
+    let mut headers = HeaderMap::new();
+    headers.insert("HX-Trigger", "showToast".parse().unwrap());
+
+    Ok((StatusCode::OK, headers, Html(html)).into_response())
 }

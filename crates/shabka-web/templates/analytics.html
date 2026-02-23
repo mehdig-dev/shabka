@@ -33,9 +33,16 @@
     <div style="font-size:2rem;font-weight:700;color:var(--info)">{{ total_relations }}</div>
     <div style="color:var(--text-dim);font-size:0.85rem">Relations</div>
   </div>
-  <div class="card" style="text-align:center">
+  <div class="card" style="text-align:center" id="stale-card">
     <div style="font-size:2rem;font-weight:700;color:{% if stale_count > 0 %}var(--warning){% else %}var(--success){% endif %}">{{ stale_count }}</div>
     <div style="color:var(--text-dim);font-size:0.85rem">Stale</div>
+    {% if stale_count > 0 %}
+    <button hx-post="/analytics/archive-stale" hx-target="#stale-card" hx-swap="innerHTML"
+            hx-confirm="Archive {{ stale_count }} stale memories?"
+            class="btn btn-outline" style="font-size:0.75rem;margin-top:0.35rem">
+      Archive All Stale
+    </button>
+    {% endif %}
   </div>
 </div>
 
@@ -80,7 +87,7 @@
       <div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.35rem">Top issues:</div>
       {% for issue in quality_top_issues %}
       <div style="font-size:0.78rem;padding:0.2rem 0;display:flex;gap:0.5rem">
-        <code style="color:var(--accent);font-size:0.72rem">{{ issue.short_id }}</code>
+        <a href="/memories/{{ issue.id }}" style="color:var(--accent);font-size:0.72rem;font-family:monospace;text-decoration:none">{{ issue.short_id }}</a>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ issue.title }}</span>
         <span style="color:var(--warning);font-size:0.72rem;white-space:nowrap">{{ issue.labels }}</span>
       </div>
