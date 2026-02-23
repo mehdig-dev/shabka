@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use askama::Template;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
@@ -28,6 +29,13 @@ struct SearchTemplate {
     results: Vec<SearchResult>,
 }
 
+#[derive(Template)]
+#[template(path = "partials/search_results.html")]
+struct SearchResultsPartial {
+    query: String,
+    results: Vec<SearchResult>,
+}
+
 struct SearchResult {
     memory: Memory,
     score: f32,
@@ -45,6 +53,7 @@ pub struct SearchParams {
 
 async fn search(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<SearchParams>,
 ) -> Result<Html<String>, AppError> {
     let query = params.q.unwrap_or_default();
@@ -115,6 +124,11 @@ async fn search(
             })
             .collect()
     };
+
+    if headers.get("hx-request").is_some() {
+        let tmpl = SearchResultsPartial { query, results };
+        return Ok(Html(tmpl.render()?));
+    }
 
     let project = params.project.unwrap_or_default();
     let tmpl = SearchTemplate {
