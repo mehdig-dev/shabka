@@ -6,7 +6,7 @@
   <title>{% block title %}Shabka{% endblock %}</title>
   <link rel="icon" type="image/png" href="data:image/png;base64,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">
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-  <script>if(localStorage.getItem('shabka-theme')==='light')document.documentElement.classList.add('light');</script>
+  <script>(function(){var t=localStorage.getItem('shabka-theme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
   <style>
     :root {
       --bg: #0f0f1a;
@@ -23,7 +23,7 @@
       --info: #3498db;
       --radius: 8px;
     }
-    html.light {
+    html[data-theme="light"] {
       --bg: #f5f5f8;
       --surface: #ffffff;
       --surface2: #eeeef2;
@@ -36,6 +36,22 @@
       --success: #27ae60;
       --warning: #e67e22;
       --info: #2980b9;
+    }
+    @media (prefers-color-scheme: light) {
+      html:not([data-theme="dark"]) {
+        --bg: #f5f5f8;
+        --surface: #ffffff;
+        --surface2: #eeeef2;
+        --border: #d0d0da;
+        --text: #1a1a2e;
+        --text-dim: #666;
+        --accent: #5b52e0;
+        --accent-hover: #4a42cc;
+        --danger: #c0392b;
+        --success: #27ae60;
+        --warning: #e67e22;
+        --info: #2980b9;
+      }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -193,6 +209,25 @@
       color: var(--text-dim);
     }
     .btn-outline:hover { border-color: var(--accent); color: var(--text); }
+
+    /* Skip link (accessibility) */
+    .skip-link {
+      position: absolute;
+      left: -999px;
+      top: 0;
+      z-index: 500;
+      background: var(--accent);
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 0 0 var(--radius) 0;
+      font-size: 0.85rem;
+    }
+    .skip-link:focus {
+      left: 0;
+    }
+
+    /* Focus visible outlines (accessibility) */
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     /* Forms */
     .form-group { margin-bottom: 1rem; }
@@ -468,30 +503,31 @@
   </style>
 </head>
 <body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
   <nav>
     <span class="logo">Shabka</span>
     <div class="links">
-      <a href="/">Memories</a>
-      <a href="/timeline">Timeline</a>
-      <a href="/graph">Graph</a>
-      <a href="/analytics">Analytics</a>
+      <a href="/" aria-label="Memories">Memories</a>
+      <a href="/timeline" aria-label="Timeline">Timeline</a>
+      <a href="/graph" aria-label="Graph">Graph</a>
+      <a href="/analytics" aria-label="Analytics">Analytics</a>
     </div>
-    <form class="search-form" action="/search" method="get">
+    <form class="search-form" action="/search" method="get" role="search">
       <div style="position:relative">
-        <input type="text" name="q" id="nav-search" placeholder="Search memories..." autocomplete="off">
+        <input type="text" name="q" id="nav-search" placeholder="Search memories..." autocomplete="off" aria-label="Search memories">
         <kbd style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:0.65rem;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:0.1rem 0.35rem;pointer-events:none" id="search-kbd">Ctrl+K</kbd>
       </div>
       <button type="submit">Search</button>
     </form>
-    <button id="theme-toggle" class="btn-outline" style="padding:0.35rem 0.6rem;font-size:0.85rem;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:var(--radius)" title="Toggle theme">
+    <button id="theme-toggle" class="btn-outline" style="padding:0.35rem 0.6rem;font-size:0.85rem;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:var(--radius)" title="Toggle theme" aria-label="Toggle dark/light theme">
       <span id="theme-icon">&#9790;</span>
     </button>
   </nav>
-  <main>
+  <main id="main-content">
     {% block breadcrumbs %}{% endblock %}
     {% block content %}{% endblock %}
   </main>
-  <div class="toast-container" id="toast-container"></div>
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
   <div class="modal-backdrop" id="confirm-modal">
     <div class="modal-box">
       <h3 id="confirm-title"></h3>
@@ -507,11 +543,18 @@
     // Theme toggle
     const themeBtn = document.getElementById('theme-toggle');
     const themeIcon = document.getElementById('theme-icon');
-    function updateIcon() { themeIcon.textContent = document.documentElement.classList.contains('light') ? '\u2600' : '\u263E'; }
+    function getEffectiveTheme() {
+      var attr = document.documentElement.getAttribute('data-theme');
+      if (attr) return attr;
+      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    function updateIcon() { themeIcon.textContent = getEffectiveTheme() === 'light' ? '\u2600' : '\u263E'; }
     updateIcon();
     themeBtn.addEventListener('click', () => {
-      document.documentElement.classList.toggle('light');
-      localStorage.setItem('shabka-theme', document.documentElement.classList.contains('light') ? 'light' : 'dark');
+      var current = getEffectiveTheme();
+      var next = current === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('shabka-theme', next);
       updateIcon();
     });
 
