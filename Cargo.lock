@@ -3082,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-cli"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3105,7 +3105,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "cc",
@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-hooks"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3147,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-mcp"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "shabka-web"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "askama",
@@ -3177,6 +3177,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "shabka-core",
  "shabka-mcp",
  "tokio",

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
-use axum::response::Json;
-use axum::routing::{delete, get, post, put};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{Html, IntoResponse, Json, Response};
+use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use shabka_core::dedup::{self, DedupDecision};
@@ -21,9 +22,14 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/memories", post(create_memory))
         .route("/api/v1/memories", get(list_memories))
-        .route("/api/v1/memories/{id}", get(get_memory))
-        .route("/api/v1/memories/{id}", put(update_memory))
-        .route("/api/v1/memories/{id}", delete(delete_memory))
+        .route(
+            "/api/v1/memories/{id}",
+            get(get_memory)
+                .put(update_memory)
+                .patch(update_memory)
+                .delete(delete_memory),
+        )
+        .route("/api/v1/memories/{id}/edit-field", get(edit_field))
         .route("/api/v1/memories/{id}/relate", post(add_relation))
         .route("/api/v1/memories/{id}/relations", get(get_relations))
         .route("/api/v1/memories/{id}/history", get(get_history))
@@ -62,10 +68,45 @@ pub struct UpdateMemoryRequest {
     pub title: Option<String>,
     pub content: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub kind: Option<String>,
     pub importance: Option<f32>,
     pub status: Option<String>,
     pub privacy: Option<String>,
     pub verification: Option<String>,
+}
+
+/// Flat form version where tags is a comma-separated string (from HTMX form inputs).
+#[derive(Debug, Deserialize)]
+struct UpdateMemoryForm {
+    title: Option<String>,
+    content: Option<String>,
+    tags: Option<String>,
+    kind: Option<String>,
+    importance: Option<f32>,
+    status: Option<String>,
+    privacy: Option<String>,
+    verification: Option<String>,
+}
+
+impl From<UpdateMemoryForm> for UpdateMemoryRequest {
+    fn from(form: UpdateMemoryForm) -> Self {
+        let tags = form.tags.map(|csv| {
+            csv.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        });
+        Self {
+            title: form.title,
+            content: form.content,
+            tags,
+            kind: form.kind,
+            importance: form.importance,
+            status: form.status,
+            privacy: form.privacy,
+            verification: form.verification,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,7 +201,221 @@ pub struct BulkResult {
     pub errors: usize,
 }
 
+// -- Helpers --
+
+fn is_htmx(headers: &HeaderMap) -> bool {
+    headers.get("hx-request").is_some()
+}
+
+const KIND_OPTIONS: &[&str] = &[
+    "observation",
+    "decision",
+    "pattern",
+    "error",
+    "fix",
+    "preference",
+    "fact",
+    "lesson",
+    "todo",
+];
+
+/// Render an HTML fragment for inline editing a single field.
+fn render_edit_field(id: &Uuid, field: &str, memory: &Memory) -> String {
+    let input_style = "background:var(--surface2);border:1px solid var(--accent);\
+        color:var(--text);padding:0.35rem 0.6rem;border-radius:4px;\
+        font-size:inherit;font-family:inherit;width:100%";
+
+    match field {
+        "title" => {
+            let val = html_escape(&memory.title);
+            format!(
+                r#"<input type="text" name="title" value="{val}" style="{input_style};font-size:1.5rem;font-weight:700"
+                    hx-patch="/api/v1/memories/{id}" hx-trigger="blur, keyup[key=='Enter']"
+                    hx-target="closest h1" hx-swap="outerHTML"
+                    hx-include="this" autofocus
+                    onfocus="this.select()">"#,
+            )
+        }
+        "tags" => {
+            let val = html_escape(&memory.tags.join(", "));
+            format!(
+                r#"<div class="inline-edit-wrap">
+                    <input type="text" name="tags" value="{val}" style="{input_style};font-size:0.85rem"
+                        hx-patch="/api/v1/memories/{id}" hx-trigger="blur, keyup[key=='Enter']"
+                        hx-target="closest .editable-tags" hx-swap="outerHTML"
+                        hx-include="this" autofocus placeholder="tag1, tag2, ..."
+                        onfocus="this.select()">
+                </div>"#,
+            )
+        }
+        "kind" => {
+            let current = memory.kind.to_string();
+            let mut options = String::new();
+            for kind in KIND_OPTIONS {
+                let selected = if *kind == current { " selected" } else { "" };
+                options.push_str(&format!(
+                    r#"<option value="{kind}"{selected}>{kind}</option>"#
+                ));
+            }
+            format!(
+                r#"<select name="kind" style="{input_style};font-size:0.75rem;width:auto"
+                    hx-patch="/api/v1/memories/{id}" hx-trigger="change"
+                    hx-target="closest .editable-kind" hx-swap="outerHTML"
+                    hx-include="this">{options}</select>"#,
+            )
+        }
+        "importance" => {
+            let pct = (memory.importance * 100.0) as u32;
+            format!(
+                r#"<span class="inline-edit-wrap" style="display:inline-flex;align-items:center;gap:0.5rem">
+                    <input type="range" name="importance" min="0" max="1" step="0.05" value="{imp}"
+                        style="width:100px"
+                        hx-patch="/api/v1/memories/{id}" hx-trigger="change"
+                        hx-target="closest .editable-importance" hx-swap="outerHTML"
+                        hx-include="this"
+                        oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+'%'">
+                    <span style="font-size:0.85rem;min-width:2.5em">{pct}%</span>
+                </span>"#,
+                imp = memory.importance,
+            )
+        }
+        "content" => {
+            let val = html_escape(&memory.content);
+            format!(
+                r#"<div style="margin-bottom:1.5rem">
+                    <textarea name="content" style="{input_style};min-height:200px;resize:vertical;font-family:'JetBrains Mono','Fira Code',monospace;font-size:0.85rem;line-height:1.7"
+                        hx-patch="/api/v1/memories/{id}" hx-trigger="blur"
+                        hx-target="closest .editable-content" hx-swap="outerHTML"
+                        hx-include="this">{val}</textarea>
+                    <div style="margin-top:0.5rem;display:flex;gap:0.5rem">
+                        <button class="btn btn-primary" style="font-size:0.8rem"
+                            hx-patch="/api/v1/memories/{id}"
+                            hx-target="closest .editable-content" hx-swap="outerHTML"
+                            hx-include="closest .editable-content"
+                            >Save</button>
+                        <button class="btn btn-outline" style="font-size:0.8rem"
+                            onclick="location.reload()">Cancel</button>
+                    </div>
+                </div>"#,
+            )
+        }
+        _ => "<span>Unknown field</span>".to_string(),
+    }
+}
+
+/// Render the display-mode HTML fragment for a field (returned after HTMX PATCH).
+fn render_display_field(id: &Uuid, field: &str, memory: &Memory) -> String {
+    match field {
+        "title" => {
+            let val = html_escape(&memory.title);
+            format!(
+                r#"<h1 hx-get="/api/v1/memories/{id}/edit-field?field=title" hx-trigger="click" hx-target="this" hx-swap="innerHTML" style="cursor:pointer" title="Click to edit">{val}</h1>"#,
+            )
+        }
+        "tags" => {
+            if memory.tags.is_empty() {
+                format!(
+                    r#"<div class="editable-tags" hx-get="/api/v1/memories/{id}/edit-field?field=tags" hx-trigger="click" hx-target="this" hx-swap="innerHTML" style="cursor:pointer;margin-bottom:1rem" title="Click to edit tags"><span style="font-size:0.82rem;color:var(--text-dim)">Click to add tags</span></div>"#,
+                )
+            } else {
+                let tags_html: String = memory
+                    .tags
+                    .iter()
+                    .map(|t| format!(r#"<span class="tag">{}</span>"#, html_escape(t)))
+                    .collect::<Vec<_>>()
+                    .join("\n    ");
+                format!(
+                    r#"<div class="editable-tags" hx-get="/api/v1/memories/{id}/edit-field?field=tags" hx-trigger="click" hx-target="this" hx-swap="innerHTML" style="cursor:pointer;margin-bottom:1rem" title="Click to edit tags">
+    {tags_html}
+</div>"#,
+                )
+            }
+        }
+        "kind" => {
+            let val = html_escape(&memory.kind.to_string());
+            format!(
+                r#"<span class="badge badge-kind editable-kind" hx-get="/api/v1/memories/{id}/edit-field?field=kind" hx-trigger="click" hx-target="this" hx-swap="outerHTML" style="cursor:pointer" title="Click to edit">{val}</span>"#,
+            )
+        }
+        "importance" => {
+            let pct = memory.importance * 100.0;
+            format!(
+                r#"<span class="editable-importance" hx-get="/api/v1/memories/{id}/edit-field?field=importance" hx-trigger="click" hx-target="this" hx-swap="innerHTML" style="cursor:pointer" title="Click to edit">Importance: <span class="importance-bar" style="width:80px"><span class="fill" style="width:{pct:.0}%"></span></span> {pct:.0}%</span>"#,
+            )
+        }
+        "content" => {
+            let val = html_escape(&memory.content);
+            // Note: The script re-renders markdown client-side after the swap.
+            format!(
+                r##"<div class="editable-content" style="margin-bottom:1.5rem">
+    <div class="content-body markdown-rendered" id="memory-content">{val}</div>
+    <button class="btn btn-outline" style="font-size:0.75rem;margin-top:0.5rem"
+        hx-get="/api/v1/memories/{id}/edit-field?field=content"
+        hx-target="closest .editable-content" hx-swap="innerHTML">Edit content</button>
+    <script>
+    (function(){{
+        var el = document.getElementById('memory-content');
+        if (el && typeof marked !== 'undefined') {{ el.innerHTML = marked.parse(el.textContent); }}
+    }})();
+    </script>
+</div>"##,
+            )
+        }
+        _ => String::new(),
+    }
+}
+
+/// Render the verification badge + buttons fragment for HTMX responses.
+fn render_verification_fragment(id: &Uuid, memory: &Memory) -> String {
+    let verification_class = match memory.verification {
+        VerificationStatus::Verified => "verified",
+        VerificationStatus::Unverified => "unverified",
+        VerificationStatus::Disputed => "disputed",
+        VerificationStatus::Outdated => "outdated",
+    };
+    let badge = format!(
+        r#"<span class="badge badge-verification-{verification_class}">{}</span>"#,
+        memory.verification,
+    );
+
+    format!(
+        r#"{badge}
+<div class="verify-actions" style="margin-left:auto;display:flex;gap:0.35rem">
+    <button hx-put="/api/v1/memories/{id}" hx-headers='{{"Content-Type":"application/json"}}' hx-vals='{{"verification":"verified"}}' hx-target="closest .verify-group" hx-swap="innerHTML" hx-confirm="Mark this memory as verified?" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#22c55e;color:#22c55e">Verify</button>
+    <button hx-put="/api/v1/memories/{id}" hx-headers='{{"Content-Type":"application/json"}}' hx-vals='{{"verification":"disputed"}}' hx-target="closest .verify-group" hx-swap="innerHTML" hx-confirm="Mark this memory as disputed?" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#f59e0b;color:#f59e0b">Dispute</button>
+    <button hx-put="/api/v1/memories/{id}" hx-headers='{{"Content-Type":"application/json"}}' hx-vals='{{"verification":"outdated"}}' hx-target="closest .verify-group" hx-swap="innerHTML" hx-confirm="Mark this memory as outdated?" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#ef4444;color:#ef4444">Outdated</button>
+</div>"#,
+    )
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 // -- Handlers --
+
+#[derive(Debug, Deserialize)]
+pub struct EditFieldParams {
+    field: String,
+}
+
+async fn edit_field(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Query(params): Query<EditFieldParams>,
+) -> Result<Html<String>, ApiError> {
+    let memory = state
+        .storage
+        .get_memory(id)
+        .await
+        .map_err(|e| ApiError::not_found(e.to_string()))?;
+
+    let html = render_edit_field(&id, &params.field, &memory);
+    Ok(Html(html))
+}
 
 async fn create_memory(
     State(state): State<Arc<AppState>>,
@@ -438,8 +693,31 @@ async fn get_memory(
 async fn update_memory(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    Json(input): Json<UpdateMemoryRequest>,
-) -> Result<Json<Memory>, ApiError> {
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let input: UpdateMemoryRequest = if content_type.contains("application/json") {
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("invalid JSON: {e}")))?
+    } else {
+        let form: UpdateMemoryForm = serde_urlencoded::from_bytes(&body)
+            .map_err(|e| ApiError::bad_request(format!("invalid form data: {e}")))?;
+        form.into()
+    };
+
+    // Capture field-presence flags before consuming input fields.
+    let has_title = input.title.is_some();
+    let has_content = input.content.is_some();
+    let has_tags = input.tags.is_some();
+    let has_kind = input.kind.is_some();
+    let has_importance = input.importance.is_some();
+    let has_verification = input.verification.is_some();
+
     let old_memory = state
         .storage
         .get_memory(id)
@@ -456,6 +734,11 @@ async fn update_memory(
 
     let privacy = input.privacy.and_then(|s| s.parse().ok());
 
+    let kind = input
+        .kind
+        .map(|s| s.parse::<MemoryKind>().map_err(ApiError::bad_request))
+        .transpose()?;
+
     let verification = input
         .verification
         .map(|s| {
@@ -470,7 +753,7 @@ async fn update_memory(
         tags: input.tags,
         importance: input.importance,
         status,
-        kind: None,
+        kind,
         privacy,
         verification,
     };
@@ -490,13 +773,41 @@ async fn update_memory(
             .with_changes(changes),
     );
 
-    Ok(Json(memory))
+    if is_htmx(&headers) {
+        // Determine which field was updated and return the appropriate display fragment.
+        let field = if has_title {
+            "title"
+        } else if has_content {
+            "content"
+        } else if has_tags {
+            "tags"
+        } else if has_kind {
+            "kind"
+        } else if has_importance {
+            "importance"
+        } else if has_verification {
+            let html = render_verification_fragment(&id, &memory);
+            let mut resp_headers = HeaderMap::new();
+            resp_headers.insert("hx-trigger", "showToast".parse().unwrap());
+            return Ok((StatusCode::OK, resp_headers, Html(html)).into_response());
+        } else {
+            "title" // fallback
+        };
+
+        let html = render_display_field(&id, field, &memory);
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert("hx-trigger", "showToast".parse().unwrap());
+        return Ok((StatusCode::OK, resp_headers, Html(html)).into_response());
+    }
+
+    Ok(Json(memory).into_response())
 }
 
 async fn delete_memory(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     let title = state.storage.get_memory(id).await.ok().map(|m| m.title);
 
     state
@@ -511,7 +822,13 @@ async fn delete_memory(
     }
     state.history.log(&event);
 
-    Ok(Json(serde_json::json!({ "deleted": id.to_string() })))
+    if is_htmx(&headers) {
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert("hx-redirect", "/?toast=Memory%20deleted".parse().unwrap());
+        return Ok((StatusCode::OK, resp_headers, Html(String::new())).into_response());
+    }
+
+    Ok(Json(serde_json::json!({ "deleted": id.to_string() })).into_response())
 }
 
 async fn add_relation(

@@ -8,12 +8,14 @@
 
 {% block content %}
 <div class="page-header">
-  <h1>{{ memory.title }}</h1>
+  <h1 hx-get="/api/v1/memories/{{ memory.id }}/edit-field?field=title"
+      hx-trigger="click" hx-target="this" hx-swap="innerHTML"
+      style="cursor:pointer" title="Click to edit">{{ memory.title }}</h1>
   <div style="display:flex;gap:0.5rem">
     <a href="/memories/{{ memory.id }}/edit" class="btn btn-outline">Edit</a>
-    <form method="post" action="/memories/{{ memory.id }}/delete" id="delete-form">
-      <button type="submit" class="btn btn-danger">Delete</button>
-    </form>
+    <button hx-delete="/api/v1/memories/{{ memory.id }}"
+            hx-confirm="Permanently delete this memory? This cannot be undone."
+            class="btn btn-danger">Delete</button>
   </div>
 </div>
 
@@ -23,69 +25,72 @@
 </div>
 {% endif %}
 
-<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center">
-  <span class="badge badge-kind">{{ memory.kind }}</span>
+<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center" class="verify-group">
+  <span class="badge badge-kind editable-kind"
+        hx-get="/api/v1/memories/{{ memory.id }}/edit-field?field=kind"
+        hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+        style="cursor:pointer" title="Click to edit">{{ memory.kind }}</span>
   <span class="badge" style="background:var(--surface2);color:var(--text-dim)">{{ memory.status }}</span>
   <span class="badge badge-verification-{{ verification_class }}">{{ memory.verification }}</span>
   <span class="badge" style="background:var(--surface2);color:var(--text-dim);opacity:0.8">Trust: {{ trust_pct }}%</span>
-  <span style="font-size:0.85rem;color:var(--text-dim)">
+  <span class="editable-importance"
+        hx-get="/api/v1/memories/{{ memory.id }}/edit-field?field=importance"
+        hx-trigger="click" hx-target="this" hx-swap="innerHTML"
+        style="font-size:0.85rem;color:var(--text-dim);cursor:pointer" title="Click to edit">
     Importance:
     <span class="importance-bar" style="width:80px"><span class="fill" style="width:{{ memory.importance * 100.0 }}%"></span></span>
     {{ "{:.0}"|format(memory.importance * 100.0) }}%
   </span>
   <div class="verify-actions" style="margin-left:auto;display:flex;gap:0.35rem">
-    <button onclick="setVerification('verified')" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#22c55e;color:#22c55e">Verify</button>
-    <button onclick="setVerification('disputed')" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#f59e0b;color:#f59e0b">Dispute</button>
-    <button onclick="setVerification('outdated')" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#ef4444;color:#ef4444">Outdated</button>
+    <button hx-put="/api/v1/memories/{{ memory.id }}"
+            hx-headers='{"Content-Type":"application/json"}'
+            hx-vals='{"verification":"verified"}'
+            hx-target="closest .verify-group" hx-swap="innerHTML"
+            hx-confirm="Mark this memory as verified?"
+            class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#22c55e;color:#22c55e">Verify</button>
+    <button hx-put="/api/v1/memories/{{ memory.id }}"
+            hx-headers='{"Content-Type":"application/json"}'
+            hx-vals='{"verification":"disputed"}'
+            hx-target="closest .verify-group" hx-swap="innerHTML"
+            hx-confirm="Mark this memory as disputed?"
+            class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#f59e0b;color:#f59e0b">Dispute</button>
+    <button hx-put="/api/v1/memories/{{ memory.id }}"
+            hx-headers='{"Content-Type":"application/json"}'
+            hx-vals='{"verification":"outdated"}'
+            hx-target="closest .verify-group" hx-swap="innerHTML"
+            hx-confirm="Mark this memory as outdated?"
+            class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.5rem;border-color:#ef4444;color:#ef4444">Outdated</button>
   </div>
 </div>
 
-{% if !memory.tags.is_empty() %}
-<div style="margin-bottom:1rem">
+<div class="editable-tags"
+     hx-get="/api/v1/memories/{{ memory.id }}/edit-field?field=tags"
+     hx-trigger="click" hx-target="this" hx-swap="innerHTML"
+     style="cursor:pointer;margin-bottom:1rem" title="Click to edit tags">
+  {% if !memory.tags.is_empty() %}
   {% for tag in memory.tags %}
     <span class="tag">{{ tag }}</span>
   {% endfor %}
+  {% else %}
+  <span style="font-size:0.82rem;color:var(--text-dim)">Click to add tags</span>
+  {% endif %}
 </div>
-{% endif %}
 
-<div class="content-body markdown-rendered" id="memory-content" style="margin-bottom:1.5rem">{{ memory.content }}</div>
+<div class="editable-content" style="margin-bottom:1.5rem">
+  <div class="content-body markdown-rendered" id="memory-content">{{ memory.content }}</div>
+  <button class="btn btn-outline" style="font-size:0.75rem;margin-top:0.5rem"
+      hx-get="/api/v1/memories/{{ memory.id }}/edit-field?field=content"
+      hx-target="closest .editable-content" hx-swap="innerHTML">Edit content</button>
+</div>
 <script src="https://unpkg.com/marked@15.0.4/marked.min.js"></script>
 <script>
 (function() {
-  const el = document.getElementById('memory-content');
+  var el = document.getElementById('memory-content');
   if (el && typeof marked !== 'undefined') {
-    const raw = el.textContent;
+    var raw = el.textContent;
     el.innerHTML = marked.parse(raw);
   }
 })();
-</script>
-
-<script>
-document.getElementById('delete-form').addEventListener('submit', async function(e) {
-  e.preventDefault();
-  const ok = await window.showConfirm('Delete Memory', 'Permanently delete this memory? This cannot be undone.');
-  if (ok) this.submit();
-});
-
-async function setVerification(status) {
-  const ok = await window.showConfirm('Set Verification', 'Mark this memory as "' + status + '"?');
-  if (!ok) return;
-  try {
-    const resp = await fetch('/api/v1/memories/{{ memory.id }}', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ verification: status }),
-    });
-    if (resp.ok) {
-      window.showToast('Marked as ' + status, 'success');
-      setTimeout(function() { location.reload(); }, 500);
-    } else {
-      window.showToast('Failed to update verification', 'error');
-    }
-  } catch (e) {
-    window.showToast('Error: ' + e.message, 'error');
-  }
-}
 </script>
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;font-size:0.8rem;color:var(--text-dim);margin-bottom:1.5rem">
@@ -146,31 +151,31 @@ async function setVerification(status) {
 
 <script>
 async function addRelation() {
-  const target = document.getElementById('rel-target').value.trim();
-  const type = document.getElementById('rel-type').value;
-  const strength = parseFloat(document.getElementById('rel-strength').value);
-  const status = document.getElementById('rel-status');
+  var target = document.getElementById('rel-target').value.trim();
+  var relType = document.getElementById('rel-type').value;
+  var strength = parseFloat(document.getElementById('rel-strength').value);
+  var statusEl = document.getElementById('rel-status');
 
-  if (!target) { status.textContent = 'Enter a target ID'; status.style.color = 'var(--danger)'; return; }
+  if (!target) { statusEl.textContent = 'Enter a target ID'; statusEl.style.color = 'var(--danger)'; return; }
 
   try {
-    const resp = await fetch('/api/v1/memories/{{ memory.id }}/relate', {
+    var resp = await fetch('/api/v1/memories/{{ memory.id }}/relate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_id: target, relation_type: type, strength }),
+      body: JSON.stringify({ target_id: target, relation_type: relType, strength: strength }),
     });
     if (resp.ok) {
-      status.textContent = 'Added!';
-      status.style.color = 'var(--success)';
-      setTimeout(() => location.reload(), 500);
+      statusEl.textContent = 'Added!';
+      statusEl.style.color = 'var(--success)';
+      setTimeout(function() { location.reload(); }, 500);
     } else {
-      const data = await resp.json();
-      status.textContent = data.error || 'Failed';
-      status.style.color = 'var(--danger)';
+      var data = await resp.json();
+      statusEl.textContent = data.error || 'Failed';
+      statusEl.style.color = 'var(--danger)';
     }
   } catch (e) {
-    status.textContent = e.message;
-    status.style.color = 'var(--danger)';
+    statusEl.textContent = e.message;
+    statusEl.style.color = 'var(--danger)';
   }
 }
 </script>
@@ -244,40 +249,40 @@ async function addRelation() {
 <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
 <script>
 (function() {
-  const KIND_COLORS = {
+  var KIND_COLORS = {
     observation: '#6c63ff', error: '#e74c3c', fix: '#2ecc71',
     decision: '#f39c12', pattern: '#3498db', lesson: '#9b59b6',
     fact: '#1abc9c', preference: '#e67e22', todo: '#95a5a6',
   };
-  const MEMORY_ID = '{{ memory.id }}';
-  let chainCy = null;
+  var MEMORY_ID = '{{ memory.id }}';
+  var chainCy = null;
 
   async function loadChain() {
-    const depth = document.getElementById('chain-depth').value;
-    const checked = [...document.querySelectorAll('.chain-rel:checked')].map(c => c.value);
-    const errorEl = document.getElementById('chain-error');
+    var depth = document.getElementById('chain-depth').value;
+    var checked = [].slice.call(document.querySelectorAll('.chain-rel:checked')).map(function(c) { return c.value; });
+    var errorEl = document.getElementById('chain-error');
     errorEl.style.display = 'none';
     if (checked.length === 0) return;
 
-    const cyEl = document.getElementById('chain-cy');
+    var cyEl = document.getElementById('chain-cy');
     cyEl.style.opacity = '0.5';
 
-    const url = `/api/memories/${MEMORY_ID}/chain?depth=${depth}&relation=${checked.join(',')}`;
+    var url = '/api/memories/' + MEMORY_ID + '/chain?depth=' + depth + '&relation=' + checked.join(',');
     try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      var resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      var data = await resp.json();
       cyEl.style.opacity = '1';
       renderChain(data);
     } catch (e) {
       cyEl.style.opacity = '1';
-      errorEl.textContent = `Failed to load chain: ${e.message}`;
+      errorEl.textContent = 'Failed to load chain: ' + e.message;
       errorEl.style.display = 'block';
     }
   }
 
   function renderChain(data) {
-    const elements = [];
+    var elements = [];
 
     // Center node
     elements.push({
@@ -292,7 +297,7 @@ async function addRelation() {
     });
 
     // Neighbor nodes
-    data.nodes.forEach(n => {
+    data.nodes.forEach(function(n) {
       elements.push({
         data: {
           id: n.id,
@@ -306,7 +311,7 @@ async function addRelation() {
     });
 
     // Edges
-    data.edges.forEach(e => {
+    data.edges.forEach(function(e) {
       elements.push({
         data: {
           source: e.source,
@@ -374,7 +379,7 @@ async function addRelation() {
       layout: {
         name: 'breadthfirst',
         directed: false,
-        roots: `#${MEMORY_ID}`,
+        roots: '#' + MEMORY_ID,
         spacingFactor: 1.2,
         animate: true,
         animationDuration: 400,
@@ -382,11 +387,11 @@ async function addRelation() {
       wheelSensitivity: 0.3,
     });
 
-    // Click node → navigate to its detail page
-    chainCy.on('tap', 'node', (evt) => {
-      const nodeId = evt.target.id();
+    // Click node to navigate to its detail page
+    chainCy.on('tap', 'node', function(evt) {
+      var nodeId = evt.target.id();
       if (nodeId !== MEMORY_ID) {
-        window.location.href = `/memories/${nodeId}`;
+        window.location.href = '/memories/' + nodeId;
       }
     });
   }
@@ -396,11 +401,18 @@ async function addRelation() {
     loadChain();
     // Attach event listeners for controls after first load
     document.getElementById('chain-depth').addEventListener('change', loadChain);
-    document.querySelectorAll('.chain-rel').forEach(cb => cb.addEventListener('change', loadChain));
+    document.querySelectorAll('.chain-rel').forEach(function(cb) { cb.addEventListener('change', loadChain); });
   };
 })();
 </script>
 {% endif %}
+
+<!-- HTMX toast listener: show toast on successful inline edits -->
+<script>
+document.body.addEventListener('showToast', function() {
+  window.showToast('Updated successfully', 'success');
+});
+</script>
 
 <div style="margin-top:2rem">
   <a href="/" class="btn btn-outline">&larr; Back to list</a>

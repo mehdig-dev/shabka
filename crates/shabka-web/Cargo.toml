@@ -30,6 +30,7 @@ uuid = { workspace = true }
 rmcp = { workspace = true }
 shabka-mcp = { path = "../shabka-mcp", default-features = false }
 tokio-util = "0.7"
+serde_urlencoded = "0.7"
 
 [dev-dependencies]
 http-body-util = "0.1"
