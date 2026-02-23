@@ -7,7 +7,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use owo_colors::OwoColorize;
 use shabka_core::assess::{self, AssessConfig, AssessmentResult, IssueCounts};
-use shabka_core::config::{self, EmbeddingState, GraphConfig, ShabkaConfig, VALID_PROVIDERS};
+use shabka_core::config::{
+    self, EmbeddingState, GraphConfig, ShabkaConfig, UpdateCheckState, VALID_PROVIDERS,
+};
 use shabka_core::decay::{self, PruneConfig, PruneResult};
 use shabka_core::embedding::EmbeddingService;
 use shabka_core::graph;
@@ -19,7 +21,7 @@ use shabka_core::storage::{create_backend, Storage, StorageBackend};
 use uuid::Uuid;
 
 #[derive(Parser)]
-#[command(name = "shabka", about = "Shabka: Shared LLM Memory System")]
+#[command(name = "shabka", about = "Shabka: Shared LLM Memory System", version)]
 enum Cli {
     /// Initialize Shabka in the current project
     Init {
@@ -1093,12 +1095,81 @@ async fn cmd_verify(
 }
 
 // ---------------------------------------------------------------------------
+// update check
+// ---------------------------------------------------------------------------
+
+/// Check for a newer version on GitHub. Returns `Some(latest)` if an update
+/// is available, `None` otherwise. Never errors — all failures are silent.
+async fn check_for_update() -> Option<String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let mut state = UpdateCheckState::load();
+
+    // If cache is fresh, use it
+    if !state.is_stale() && !state.latest_version.is_empty() {
+        let current_ver = semver::Version::parse(current).ok()?;
+        let latest_ver = semver::Version::parse(&state.latest_version).ok()?;
+        return if latest_ver > current_ver {
+            Some(state.latest_version)
+        } else {
+            None
+        };
+    }
+
+    // Fetch from GitHub
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .user_agent(format!("shabka/{current}"))
+        .build()
+        .ok()?;
+
+    let resp = client
+        .get("https://api.github.com/repos/mehdig-dev/shabka/releases/latest")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let tag = body["tag_name"].as_str()?;
+    let tag_version = tag.strip_prefix('v').unwrap_or(tag);
+    let html_url = body["html_url"].as_str().unwrap_or("").to_string();
+
+    // Update cache
+    state.latest_version = tag_version.to_string();
+    state.last_checked = chrono::Utc::now().to_rfc3339();
+    state.release_url = html_url;
+    let _ = state.save();
+
+    let current_ver = semver::Version::parse(current).ok()?;
+    let latest_ver = semver::Version::parse(tag_version).ok()?;
+    if latest_ver > current_ver {
+        Some(tag_version.to_string())
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
 // status
 // ---------------------------------------------------------------------------
 
 async fn cmd_status(storage: &Storage, config: &ShabkaConfig, user_id: &str) -> Result<()> {
-    println!("{}", "Shabka Status".bold());
+    let version = env!("CARGO_PKG_VERSION");
+    println!("{}", format!("Shabka Status v{version}").bold());
+    println!("  {}    {}", "Version:".dimmed(), version);
     println!("  {}       {}", "User:".dimmed(), user_id);
+
+    // Schema info (SQLite only)
+    if let Some((schema_ver, writer_ver)) = storage.schema_info() {
+        let writer = writer_ver
+            .map(|v| format!(", last written by {v}"))
+            .unwrap_or_default();
+        println!("  {}   schema v{schema_ver}{writer}", "Database:".dimmed(),);
+    }
 
     // Check HelixDB connectivity
     let timeline_result = storage
@@ -1202,6 +1273,19 @@ async fn cmd_status(storage: &Storage, config: &ShabkaConfig, user_id: &str) -> 
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     println!("  {}     {}", "Config:".dimmed(), config_path);
+
+    // Check for updates (non-blocking, silent on failure)
+    if config.updates.check_for_updates {
+        if let Some(latest) = check_for_update().await {
+            println!();
+            println!(
+                "  {} v{} -> cargo install shabka-cli (current: v{})",
+                "Update available:".yellow().bold(),
+                latest,
+                version
+            );
+        }
+    }
 
     Ok(())
 }

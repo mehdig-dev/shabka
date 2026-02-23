@@ -8,7 +8,7 @@ use tracing_subscriber::EnvFilter;
 use shabka_mcp::ShabkaServer;
 
 #[derive(Parser)]
-#[command(name = "shabka-mcp", about = "Shabka MCP server")]
+#[command(name = "shabka-mcp", about = "Shabka MCP server", version)]
 struct Cli {
     /// Start in HTTP mode instead of stdio (default port: 8080)
     #[arg(long, num_args = 0..=1, default_missing_value = "8080", value_name = "PORT")]

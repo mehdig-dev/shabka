@@ -33,6 +33,8 @@ pub struct ShabkaConfig {
     pub llm: LlmConfig,
     #[serde(default)]
     pub consolidate: crate::consolidate::ConsolidateConfig,
+    #[serde(default)]
+    pub updates: UpdatesConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -494,6 +496,7 @@ impl ShabkaConfig {
             scrub: crate::scrub::ScrubConfig::default(),
             llm: LlmConfig::default(),
             consolidate: crate::consolidate::ConsolidateConfig::default(),
+            updates: UpdatesConfig::default(),
         }
     }
 
@@ -702,6 +705,87 @@ impl EmbeddingState {
              \x20 Run `shabka reembed` to re-embed all memories with the new provider.",
             state.provider, state.model, state.dimensions, provider, model, dimensions,
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Updates config — user-facing toggle for update checks
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatesConfig {
+    #[serde(default = "default_true")]
+    pub check_for_updates: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check_for_updates: true,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Update check state — cached latest-version info
+// ---------------------------------------------------------------------------
+
+/// Persisted cache of the last GitHub release check.
+/// Written after a successful check, used to avoid hitting the API on every run.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct UpdateCheckState {
+    #[serde(default)]
+    pub latest_version: String,
+    /// RFC3339 timestamp of the last successful check
+    #[serde(default)]
+    pub last_checked: String,
+    #[serde(default)]
+    pub release_url: String,
+}
+
+impl UpdateCheckState {
+    /// Path to the state file: `~/.config/shabka/update_check.toml`
+    pub fn path() -> Option<PathBuf> {
+        dirs::config_dir().map(|p| p.join("shabka").join("update_check.toml"))
+    }
+
+    /// Load from disk. Returns `Default` if the file is missing or unparseable.
+    pub fn load() -> Self {
+        let Some(path) = Self::path() else {
+            return Self::default();
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Save to disk, creating the parent directory if needed.
+    pub fn save(&self) -> Result<()> {
+        let path = Self::path()
+            .ok_or_else(|| ShabkaError::Config("cannot determine config directory".to_string()))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ShabkaError::Config(format!("failed to create config dir: {e}")))?;
+        }
+        let toml_str = toml::to_string_pretty(self).map_err(|e| {
+            ShabkaError::Config(format!("failed to serialize update check state: {e}"))
+        })?;
+        std::fs::write(&path, toml_str)
+            .map_err(|e| ShabkaError::Config(format!("failed to write update check state: {e}")))?;
+        Ok(())
+    }
+
+    /// Returns `true` if the cache is stale (empty or older than 24 hours).
+    pub fn is_stale(&self) -> bool {
+        if self.last_checked.is_empty() {
+            return true;
+        }
+        let Ok(checked) = chrono::DateTime::parse_from_rfc3339(&self.last_checked) else {
+            return true;
+        };
+        let age = chrono::Utc::now().signed_duration_since(checked);
+        age.num_hours() >= 24
     }
 }
 
@@ -1276,5 +1360,72 @@ provider = "hash"
         assert!(warnings
             .iter()
             .any(|w| w.contains("unknown storage backend")));
+    }
+
+    // -- UpdatesConfig tests --
+
+    #[test]
+    fn test_updates_config_default() {
+        let config = UpdatesConfig::default();
+        assert!(config.check_for_updates);
+    }
+
+    #[test]
+    fn test_updates_config_toml() {
+        let toml_str = r#"
+[updates]
+check_for_updates = false
+"#;
+        let config: ShabkaConfig = toml::from_str(toml_str).unwrap();
+        assert!(!config.updates.check_for_updates);
+    }
+
+    #[test]
+    fn test_updates_config_backward_compat() {
+        // Old configs without [updates] should still load
+        let toml_str = r#"
+[embedding]
+provider = "hash"
+"#;
+        let config: ShabkaConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.updates.check_for_updates);
+    }
+
+    // -- UpdateCheckState tests --
+
+    #[test]
+    fn test_update_check_state_roundtrip() {
+        let state = UpdateCheckState {
+            latest_version: "0.6.0".to_string(),
+            last_checked: "2025-06-01T12:00:00Z".to_string(),
+            release_url: "https://github.com/mehdig-dev/shabka/releases/tag/v0.6.0".to_string(),
+        };
+        let toml_str = toml::to_string_pretty(&state).unwrap();
+        let loaded: UpdateCheckState = toml::from_str(&toml_str).unwrap();
+        assert_eq!(loaded, state);
+    }
+
+    #[test]
+    fn test_update_check_state_is_stale_empty() {
+        let state = UpdateCheckState::default();
+        assert!(state.is_stale());
+    }
+
+    #[test]
+    fn test_update_check_state_is_stale_old() {
+        let state = UpdateCheckState {
+            last_checked: "2020-01-01T00:00:00Z".to_string(),
+            ..Default::default()
+        };
+        assert!(state.is_stale());
+    }
+
+    #[test]
+    fn test_update_check_state_fresh() {
+        let state = UpdateCheckState {
+            last_checked: chrono::Utc::now().to_rfc3339(),
+            ..Default::default()
+        };
+        assert!(!state.is_stale());
     }
 }

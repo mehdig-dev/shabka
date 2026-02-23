@@ -111,6 +111,16 @@ impl StorageBackend for Storage {
     }
 }
 
+impl Storage {
+    /// Return `(schema_version, last_writer_version)` for SQLite, `None` for Helix.
+    pub fn schema_info(&self) -> Option<(i32, Option<String>)> {
+        match self {
+            Storage::Sqlite(s) => s.schema_info().ok(),
+            Storage::Helix(_) => None,
+        }
+    }
+}
+
 /// Create a storage backend from the given configuration.
 pub fn create_backend(config: &ShabkaConfig) -> Result<Storage> {
     match config.storage.backend.as_str() {

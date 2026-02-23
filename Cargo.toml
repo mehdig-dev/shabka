@@ -66,6 +66,9 @@ owo-colors = "4"
 # Process/path utilities
 which = "8"
 
+# Versioning
+semver = "1"
+
 # Error handling
 anyhow = "1"
 thiserror = "2"

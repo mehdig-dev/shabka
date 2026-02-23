@@ -11,6 +11,10 @@ use crate::error::{Result, ShabkaError};
 use crate::model::*;
 use crate::storage::StorageBackend;
 
+/// Current schema version. Bump this when adding migrations.
+/// Existing DBs at version 0 get stamped to this on first open.
+const SCHEMA_VERSION: i32 = 1;
+
 static EXTENSIONS_REGISTERED: Once = Once::new();
 
 extern "C" {
@@ -206,6 +210,9 @@ impl SqliteStorage {
         // from stored embeddings or default to 128 (hash provider).
         Self::ensure_vec_table(&conn)?;
 
+        // Schema versioning: stamp version + metadata table
+        Self::check_schema_version(&conn)?;
+
         Ok(())
     }
 
@@ -273,6 +280,90 @@ impl SqliteStorage {
         }
 
         Ok(())
+    }
+
+    // ── schema versioning ──────────────────────────────────────────────
+
+    /// Check and update the schema version using `PRAGMA user_version`.
+    ///
+    /// - `user_version == 0` → fresh DB or pre-versioning; stamp to `SCHEMA_VERSION`
+    /// - `user_version < SCHEMA_VERSION` → run sequential migrations, then update
+    /// - `user_version > SCHEMA_VERSION` → log warning (newer binary wrote this DB)
+    ///
+    /// Also creates the `metadata` table and records `last_writer_version`.
+    fn check_schema_version(conn: &Connection) -> Result<()> {
+        // Create metadata table (idempotent)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        )
+        .map_err(|e| ShabkaError::Storage(format!("failed to create metadata table: {e}")))?;
+
+        let current: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|e| ShabkaError::Storage(format!("failed to read user_version: {e}")))?;
+
+        if current < SCHEMA_VERSION {
+            if current > 0 {
+                Self::run_migrations(conn, current)?;
+            }
+            conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
+                .map_err(|e| ShabkaError::Storage(format!("failed to set user_version: {e}")))?;
+        } else if current > SCHEMA_VERSION {
+            tracing::warn!(
+                db_version = current,
+                binary_version = SCHEMA_VERSION,
+                "database was written by a newer version of Shabka — consider upgrading"
+            );
+        }
+
+        // Always record which binary version last wrote to this DB
+        let writer_version = env!("CARGO_PKG_VERSION");
+        conn.execute(
+            "INSERT INTO metadata (key, value) VALUES ('last_writer_version', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![writer_version],
+        )
+        .map_err(|e| ShabkaError::Storage(format!("failed to update metadata: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Run sequential migrations from `from_version` up to `SCHEMA_VERSION`.
+    /// Each version bump gets its own match arm.
+    #[allow(clippy::needless_range_loop)]
+    fn run_migrations(_conn: &Connection, from_version: i32) -> Result<()> {
+        let mut version = from_version;
+        while version < SCHEMA_VERSION {
+            // Future migrations go here:
+            // if version == 1 { conn.execute_batch("ALTER TABLE ...")?; }
+            version += 1;
+        }
+        Ok(())
+    }
+
+    /// Return `(schema_version, last_writer_version)` for status display.
+    pub fn schema_info(&self) -> Result<(i32, Option<String>)> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ShabkaError::Storage(format!("failed to acquire database lock: {e}")))?;
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|e| ShabkaError::Storage(format!("failed to read user_version: {e}")))?;
+
+        let writer: Option<String> = conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'last_writer_version'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        Ok((version, writer))
     }
 
     /// Run a blocking closure against the SQLite connection on the Tokio
@@ -1685,5 +1776,26 @@ mod tests {
         let loaded = storage.get_session(id).await.unwrap();
         assert_eq!(loaded.summary, Some("Done".to_string()));
         assert_eq!(loaded.memory_count, 3);
+    }
+
+    // ── schema versioning tests ──────────────────────────────────────
+
+    #[test]
+    fn test_schema_version_stamped_on_fresh_db() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let (version, writer) = storage.schema_info().unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        assert!(writer.is_some());
+        assert_eq!(writer.unwrap(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_metadata_table_exists() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let conn = storage.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM metadata", [], |row| row.get(0))
+            .unwrap();
+        assert!(count >= 1, "metadata table should have at least one row");
     }
 }

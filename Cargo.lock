@@ -3092,6 +3092,7 @@ dependencies = [
  "owo-colors",
  "ratatui",
  "reqwest 0.13.2",
+ "semver",
  "serde",
  "serde_json",
  "shabka-core",
