@@ -10,6 +10,19 @@ pub enum AsyncAction {
     Search { query: String },
     /// Fetch full detail for a memory (memory + relations + trust).
     LoadDetail { id: Uuid },
+    /// Save a new memory.
+    SaveMemory {
+        title: String,
+        content: String,
+        kind: MemoryKind,
+    },
+    /// Update an existing memory.
+    UpdateMemory {
+        id: Uuid,
+        title: String,
+        content: String,
+        kind: MemoryKind,
+    },
 }
 
 /// Results the async worker sends back to the UI.
@@ -29,6 +42,10 @@ pub enum AsyncResult {
         trust: f32,
         history: Vec<String>,
     },
+    /// A new memory was saved successfully.
+    MemorySaved,
+    /// An existing memory was updated successfully.
+    MemoryUpdated,
     /// An error occurred during an async operation.
     Error(String),
 }

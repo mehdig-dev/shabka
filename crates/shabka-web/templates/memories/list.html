@@ -52,6 +52,10 @@
   <a href="/memories/new" class="btn btn-primary">Create your first memory</a>
 </div>
 {% else %}
+  <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;padding-left:0.15rem">
+    <input type="checkbox" id="select-all" style="accent-color:var(--accent);cursor:pointer" title="Select all">
+    <label for="select-all" style="font-size:0.8rem;color:var(--text-dim);cursor:pointer;user-select:none">Select all</label>
+  </div>
   {% for item in memories %}
   <div class="card" style="display:flex;align-items:flex-start;gap:0.75rem">
     <input type="checkbox" class="bulk-select" data-id="{{ item.entry.id }}" style="margin-top:0.35rem;accent-color:var(--accent);cursor:pointer" onclick="event.stopPropagation()">
@@ -98,7 +102,7 @@
 {% endif %}
 
 <!-- Floating bulk action bar -->
-<div id="bulk-bar" style="display:none;position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:0.75rem 1.25rem;display:none;align-items:center;gap:1rem;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200">
+<div id="bulk-bar" style="display:none;position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:0.75rem 1.25rem;align-items:center;gap:1rem;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200">
   <span id="bulk-count" style="font-size:0.85rem;color:var(--text-dim)">0 selected</span>
   <button class="btn btn-outline" onclick="bulkArchive()" style="font-size:0.8rem">Archive Selected</button>
   <button class="btn btn-danger" onclick="bulkDelete()" style="font-size:0.8rem">Delete Selected</button>
@@ -125,11 +129,33 @@
   }
 
   document.querySelectorAll('.bulk-select').forEach(cb => {
-    cb.addEventListener('change', updateBar);
+    cb.addEventListener('change', function() {
+      updateBar();
+      // Sync "select all" state
+      const all = document.querySelectorAll('.bulk-select');
+      const checked = document.querySelectorAll('.bulk-select:checked');
+      const selectAll = document.getElementById('select-all');
+      if (selectAll) {
+        selectAll.checked = all.length > 0 && checked.length === all.length;
+        selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
+      }
+    });
   });
+
+  // "Select all" checkbox
+  const selectAllCb = document.getElementById('select-all');
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', function() {
+      const checked = this.checked;
+      document.querySelectorAll('.bulk-select').forEach(cb => { cb.checked = checked; });
+      updateBar();
+    });
+  }
 
   window.clearSelection = function() {
     document.querySelectorAll('.bulk-select:checked').forEach(c => c.checked = false);
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) { selectAll.checked = false; selectAll.indeterminate = false; }
     updateBar();
   };
 

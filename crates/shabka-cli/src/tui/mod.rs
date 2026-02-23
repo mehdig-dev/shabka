@@ -88,6 +88,12 @@ fn run_loop(
             app.handle_result(result);
         }
 
+        // If a save/update completed, trigger a timeline refresh
+        if app.needs_refresh {
+            app.needs_refresh = false;
+            let _ = action_tx.send(AsyncAction::LoadTimeline { limit: 500 });
+        }
+
         // Poll for keyboard events (50ms timeout for responsive UI)
         if ct_event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = ct_event::read()? {
@@ -129,6 +135,7 @@ fn render(frame: &mut Frame, app: &App, storage_info: &str, provider_info: &str)
         Screen::List => views::list::render(frame, app, area),
         Screen::Detail => views::detail::render(frame, app, area),
         Screen::Status => views::status::render(frame, app, area, storage_info, provider_info),
+        Screen::Create => views::create::render(frame, app, area),
     }
 
     // Render error toast overlay if present
@@ -199,6 +206,34 @@ async fn worker_loop(
                 },
                 Err(e) => AsyncResult::Error(format!("Failed to load detail: {e}")),
             },
+            AsyncAction::SaveMemory {
+                title,
+                content,
+                kind,
+            } => {
+                let memory = Memory::new(title, content, kind, "tui".to_string());
+                match storage.save_memory(&memory, None).await {
+                    Ok(()) => AsyncResult::MemorySaved,
+                    Err(e) => AsyncResult::Error(format!("Failed to save memory: {e}")),
+                }
+            }
+            AsyncAction::UpdateMemory {
+                id,
+                title,
+                content,
+                kind,
+            } => {
+                let input = UpdateMemoryInput {
+                    title: Some(title),
+                    content: Some(content),
+                    kind: Some(kind),
+                    ..Default::default()
+                };
+                match storage.update_memory(id, &input).await {
+                    Ok(_) => AsyncResult::MemoryUpdated,
+                    Err(e) => AsyncResult::Error(format!("Failed to update memory: {e}")),
+                }
+            }
         };
         if result_tx.send(result).is_err() {
             break; // UI closed

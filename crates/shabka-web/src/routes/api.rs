@@ -1432,6 +1432,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bulk_delete_partial() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create 3 memories with distinct content
+        let mut ids = Vec::new();
+        for (title, content) in &[
+            ("Delete X", "First unique delete content about x-ray topic"),
+            (
+                "Delete Y",
+                "Second unique delete content about yellow topic",
+            ),
+            ("Keep Z", "Third unique delete content about zebra topic"),
+        ] {
+            let body = serde_json::json!({
+                "title": title,
+                "content": content,
+                "kind": "fact"
+            });
+            let req = Request::builder()
+                .method("POST")
+                .uri("/api/v1/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let json = body_json(resp.into_body()).await;
+            ids.push(json["id"].as_str().unwrap().to_string());
+        }
+        assert_eq!(ids.len(), 3);
+
+        // Bulk delete first 2
+        let delete_ids = vec![ids[0].clone(), ids[1].clone()];
+        let bulk_body = serde_json::json!({ "ids": delete_ids });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories/bulk/delete")
+            .header("content-type", "application/json")
+            .body(Body::from(bulk_body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["processed"], 2);
+        assert_eq!(json["errors"], 0);
+
+        // Verify deleted memories return 404
+        for deleted_id in &delete_ids {
+            let req = Request::builder()
+                .uri(format!("/api/v1/memories/{deleted_id}"))
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "Memory {} should be deleted",
+                deleted_id
+            );
+        }
+
+        // Verify 3rd memory still exists
+        let req = Request::builder()
+            .uri(format!("/api/v1/memories/{}", ids[2]))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["memory"]["title"], "Keep Z");
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete_invalid_ids() {
+        let app = test_router();
+        let body = serde_json::json!({ "ids": ["not-a-uuid", "also-bad"] });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories/bulk/delete")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["processed"], 0);
+        assert_eq!(json["errors"], 2);
+    }
+
+    #[tokio::test]
     async fn test_create_validation_empty_title() {
         let app = test_router();
         let body = serde_json::json!({
@@ -1641,7 +1732,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bulk_archive() {
+    async fn test_bulk_archive_empty() {
         let app = test_router();
         let body = serde_json::json!({ "ids": [] });
         let req = Request::builder()
@@ -1655,6 +1746,107 @@ mod tests {
         let json = body_json(resp.into_body()).await;
         assert_eq!(json["processed"], 0);
         assert_eq!(json["errors"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_archive_with_memories() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state.clone());
+
+        // Create 3 memories with distinct content to avoid dedup
+        let mut ids = Vec::new();
+        for (title, content) in &[
+            (
+                "Archive A",
+                "First unique archive content about alpha topic",
+            ),
+            (
+                "Archive B",
+                "Second unique archive content about beta topic",
+            ),
+            (
+                "Archive C",
+                "Third unique archive content about gamma topic",
+            ),
+        ] {
+            let body = serde_json::json!({
+                "title": title,
+                "content": content,
+                "kind": "observation"
+            });
+            let req = Request::builder()
+                .method("POST")
+                .uri("/api/v1/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let json = body_json(resp.into_body()).await;
+            ids.push(json["id"].as_str().unwrap().to_string());
+        }
+        assert_eq!(ids.len(), 3);
+
+        // Bulk archive first 2
+        let archive_ids = vec![ids[0].clone(), ids[1].clone()];
+        let bulk_body = serde_json::json!({ "ids": archive_ids });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories/bulk/archive")
+            .header("content-type", "application/json")
+            .body(Body::from(bulk_body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["processed"], 2);
+        assert_eq!(json["errors"], 0);
+
+        // Verify the 2 archived memories have status "archived"
+        for archived_id in &archive_ids {
+            let req = Request::builder()
+                .uri(format!("/api/v1/memories/{archived_id}"))
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let json = body_json(resp.into_body()).await;
+            assert_eq!(
+                json["memory"]["status"], "archived",
+                "Memory {} should be archived",
+                archived_id
+            );
+        }
+
+        // Verify the 3rd memory is still active
+        let req = Request::builder()
+            .uri(format!("/api/v1/memories/{}", ids[2]))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(
+            json["memory"]["status"], "active",
+            "Third memory should remain active"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bulk_archive_invalid_ids() {
+        let app = test_router();
+        let body = serde_json::json!({ "ids": ["not-a-uuid", "also-invalid"] });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories/bulk/archive")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["processed"], 0);
+        assert_eq!(json["errors"], 2);
     }
 
     // ── Existing relation test ──────────────────────────────────────────

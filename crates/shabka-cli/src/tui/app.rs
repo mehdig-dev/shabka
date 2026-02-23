@@ -9,6 +9,7 @@ pub enum Screen {
     List,
     Detail,
     Status,
+    Create,
 }
 
 /// Input mode within the current screen.
@@ -18,6 +19,19 @@ pub enum InputMode {
     Search,
     Filter,
 }
+
+/// All memory kinds for create/edit form.
+pub const CREATE_KINDS: &[MemoryKind] = &[
+    MemoryKind::Observation,
+    MemoryKind::Decision,
+    MemoryKind::Pattern,
+    MemoryKind::Error,
+    MemoryKind::Fix,
+    MemoryKind::Preference,
+    MemoryKind::Fact,
+    MemoryKind::Lesson,
+    MemoryKind::Todo,
+];
 
 /// All memory kinds for filter cycling.
 pub const ALL_KINDS: &[Option<MemoryKind>] = &[
@@ -39,6 +53,7 @@ pub struct App {
     pub input_mode: InputMode,
     pub should_quit: bool,
     pub loading: bool,
+    pub needs_refresh: bool,
 
     // -- List state --
     pub entries: Vec<TimelineEntry>,
@@ -63,6 +78,13 @@ pub struct App {
     // -- Splash --
     pub splash_until: std::time::Instant,
 
+    // -- Create/Edit form state --
+    pub create_title: String,
+    pub create_content: String,
+    pub create_kind_index: usize,
+    pub create_field: usize, // 0=title, 1=content, 2=kind
+    pub editing_id: Option<uuid::Uuid>,
+
     // -- Error toast --
     pub error_message: Option<String>,
     pub error_timer: u8, // ticks remaining
@@ -75,6 +97,7 @@ impl App {
             input_mode: InputMode::Normal,
             should_quit: false,
             loading: true,
+            needs_refresh: false,
 
             entries: Vec::new(),
             filtered_entries: Vec::new(),
@@ -94,6 +117,12 @@ impl App {
             kind_counts: Vec::new(),
 
             splash_until: std::time::Instant::now() + std::time::Duration::from_secs(3),
+
+            create_title: String::new(),
+            create_content: String::new(),
+            create_kind_index: 0,
+            create_field: 0,
+            editing_id: None,
 
             error_message: None,
             error_timer: 0,
@@ -129,6 +158,14 @@ impl App {
                 self.screen = Screen::Detail;
                 self.loading = false;
             }
+            AsyncResult::MemorySaved | AsyncResult::MemoryUpdated => {
+                self.screen = Screen::List;
+                self.editing_id = None;
+                self.loading = true;
+                // The caller will need to trigger a timeline refresh.
+                // We set a flag via `loading` so the next handle cycle picks it up.
+                self.needs_refresh = true;
+            }
             AsyncResult::Error(msg) => {
                 self.error_message = Some(msg);
                 self.error_timer = 100; // ~5s at 50ms tick
@@ -154,6 +191,7 @@ impl App {
                 self.handle_status_normal(key);
                 None
             }
+            (Screen::Create, _) => self.handle_create(key),
             _ => None,
         }
     }
@@ -211,6 +249,16 @@ impl App {
                 // Refresh
                 self.loading = true;
                 Some(AsyncAction::LoadTimeline { limit: 500 })
+            }
+            KeyCode::Char('n') => {
+                // Open create screen with blank form
+                self.create_title.clear();
+                self.create_content.clear();
+                self.create_kind_index = 0;
+                self.create_field = 0;
+                self.editing_id = None;
+                self.screen = Screen::Create;
+                None
             }
             KeyCode::Esc => {
                 // Clear search results, go back to timeline
@@ -307,6 +355,21 @@ impl App {
                 self.should_quit = true;
                 None
             }
+            KeyCode::Char('e') => {
+                // Open create screen pre-filled with current memory for editing
+                if let Some(ref memory) = self.detail_memory {
+                    self.create_title = memory.title.clone();
+                    self.create_content = memory.content.clone();
+                    self.create_kind_index = CREATE_KINDS
+                        .iter()
+                        .position(|k| *k == memory.kind)
+                        .unwrap_or(0);
+                    self.create_field = 0;
+                    self.editing_id = Some(memory.id);
+                    self.screen = Screen::Create;
+                }
+                None
+            }
             KeyCode::Esc | KeyCode::Backspace => {
                 self.screen = Screen::List;
                 self.detail_memory = None;
@@ -342,6 +405,90 @@ impl App {
                 self.screen = Screen::List;
             }
             _ => {}
+        }
+    }
+
+    fn handle_create(&mut self, key: KeyEvent) -> Option<AsyncAction> {
+        match key.code {
+            KeyCode::Esc => {
+                self.screen = Screen::List;
+                self.editing_id = None;
+                None
+            }
+            KeyCode::Tab => {
+                self.create_field = (self.create_field + 1) % 3;
+                None
+            }
+            KeyCode::BackTab => {
+                self.create_field = if self.create_field == 0 {
+                    2
+                } else {
+                    self.create_field - 1
+                };
+                None
+            }
+            KeyCode::Up if self.create_field == 2 => {
+                // Cycle kind backwards
+                if self.create_kind_index == 0 {
+                    self.create_kind_index = CREATE_KINDS.len() - 1;
+                } else {
+                    self.create_kind_index -= 1;
+                }
+                None
+            }
+            KeyCode::Down if self.create_field == 2 => {
+                // Cycle kind forward
+                self.create_kind_index = (self.create_kind_index + 1) % CREATE_KINDS.len();
+                None
+            }
+            KeyCode::Enter if self.create_field == 2 => {
+                // Cycle kind forward on Enter
+                self.create_kind_index = (self.create_kind_index + 1) % CREATE_KINDS.len();
+                None
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+S: Save memory
+                if self.create_title.trim().is_empty() {
+                    return None;
+                }
+                let kind = CREATE_KINDS[self.create_kind_index];
+                if let Some(id) = self.editing_id {
+                    Some(AsyncAction::UpdateMemory {
+                        id,
+                        title: self.create_title.clone(),
+                        content: self.create_content.clone(),
+                        kind,
+                    })
+                } else {
+                    Some(AsyncAction::SaveMemory {
+                        title: self.create_title.clone(),
+                        content: self.create_content.clone(),
+                        kind,
+                    })
+                }
+            }
+            KeyCode::Char(c) if self.create_field < 2 => {
+                if self.create_field == 0 {
+                    self.create_title.push(c);
+                } else {
+                    self.create_content.push(c);
+                }
+                None
+            }
+            KeyCode::Backspace if self.create_field < 2 => {
+                if self.create_field == 0 {
+                    self.create_title.pop();
+                } else {
+                    self.create_content.pop();
+                }
+                None
+            }
+            KeyCode::Enter if self.create_field == 1 => {
+                // Newline in content field
+                self.create_content.push('\n');
+                None
+            }
+            _ => None,
         }
     }
 
