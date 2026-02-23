@@ -1701,4 +1701,151 @@ mod tests {
         assert_eq!(json["source_id"], ids[0]);
         assert_eq!(json["target_id"], ids[1]);
     }
+
+    // ── HTMX / new endpoint tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_search_partial_htmx() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/search?q=test")
+            .header("hx-request", "true")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&bytes);
+        // HTMX partial should NOT contain doctype (it's a fragment)
+        assert!(
+            !html.contains("<!doctype html>"),
+            "Expected partial, got full page"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_full_page() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/search?q=test")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&bytes);
+        // Full page should contain doctype
+        assert!(html.contains("<!doctype html>"), "Expected full page");
+    }
+
+    #[tokio::test]
+    async fn test_patch_memory() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create
+        let body = serde_json::json!({
+            "title": "Patch test memory",
+            "content": "Content for patch test",
+            "kind": "fact"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let json = body_json(resp.into_body()).await;
+        let id = json["id"].as_str().unwrap().to_string();
+
+        // PATCH
+        let patch_body = serde_json::json!({ "title": "Patched title" });
+        let req = Request::builder()
+            .method("PATCH")
+            .uri(format!("/api/v1/memories/{id}"))
+            .header("content-type", "application/json")
+            .body(Body::from(patch_body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["title"], "Patched title");
+    }
+
+    #[tokio::test]
+    async fn test_edit_field_endpoint() {
+        let state = test_app_state();
+        let mem = shabka_core::model::Memory::new(
+            "Edit field test".to_string(),
+            "Content for edit field".to_string(),
+            shabka_core::model::MemoryKind::Observation,
+            "test-user".to_string(),
+        );
+        let id = mem.id;
+        state.storage.save_memory(&mem, None).await.unwrap();
+
+        let app = crate::routes::router().with_state(state);
+        let req = Request::builder()
+            .uri(format!("/api/v1/memories/{id}/edit-field?field=title"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&bytes);
+        assert!(
+            html.contains("<input"),
+            "Expected an input element for inline editing"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_archive_stale_endpoint() {
+        let app = test_router();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/analytics/archive-stale")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_htmx_delete_redirect() {
+        let state = test_app_state();
+        let app = crate::routes::router().with_state(state);
+
+        // Create
+        let body = serde_json::json!({
+            "title": "HTMX delete test",
+            "content": "Will be deleted via HTMX",
+            "kind": "observation"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/memories")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let json = body_json(resp.into_body()).await;
+        let id = json["id"].as_str().unwrap().to_string();
+
+        // DELETE with HX-Request
+        let req = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/v1/memories/{id}"))
+            .header("hx-request", "true")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let redirect = resp
+            .headers()
+            .get("hx-redirect")
+            .expect("Expected hx-redirect header");
+        assert!(redirect.to_str().unwrap().contains("toast=Memory"));
+    }
 }
