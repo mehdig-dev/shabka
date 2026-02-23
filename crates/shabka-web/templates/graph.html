@@ -208,11 +208,57 @@
     display: flex;
     gap: 0.5rem;
   }
+
+  @media (max-width: 768px) {
+    .graph-layout {
+      grid-template-columns: 1fr;
+      height: calc(100vh - 80px);
+    }
+    .graph-layout.sidebar-open {
+      grid-template-columns: 1fr;
+    }
+    .filter-panel {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 200;
+      border-right: none;
+    }
+    .filter-panel.mobile-open {
+      display: block;
+    }
+    .detail-sidebar {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      max-height: 50vh;
+      overflow-y: auto;
+      border-left: none;
+      border-top: 1px solid var(--border);
+      border-radius: var(--radius) var(--radius) 0 0;
+      z-index: 150;
+      transform: translateY(100%);
+      transition: transform 0.3s ease;
+    }
+    .graph-layout.sidebar-open .detail-sidebar {
+      display: block;
+      transform: translateY(0);
+    }
+    .graph-toolbar {
+      top: 8px;
+      right: 8px;
+    }
+    #filter-toggle {
+      display: block !important;
+    }
+    .mobile-filter-close { display: block !important; }
+  }
 </style>
 
 <div class="graph-layout" id="graph-layout">
   <!-- Left: Filters -->
   <div class="filter-panel">
+    <button class="mobile-filter-close" style="display:none;float:right;background:none;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer;padding:0.2rem" onclick="toggleFilters()">&times;</button>
     <h3>Search</h3>
     <input type="text" class="search-input" id="graph-search" placeholder="Filter nodes...">
 
@@ -238,6 +284,8 @@
 
     <div class="filter-stats" id="filter-stats"></div>
   </div>
+
+  <button id="filter-toggle" style="display:none;position:fixed;bottom:1rem;right:1rem;z-index:160;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:0.5rem 0.75rem;border-radius:var(--radius);font-size:0.85rem;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3)" onclick="toggleFilters()">&#9776; Filters</button>
 
   <!-- Center: Graph -->
   <div class="graph-area">
@@ -621,6 +669,11 @@ document.getElementById('sidebar-close').addEventListener('click', closeSidebar)
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeSidebar();
 });
+
+function toggleFilters() {
+  var panel = document.querySelector('.filter-panel');
+  panel.classList.toggle('mobile-open');
+}
 
 init();
 </script>
