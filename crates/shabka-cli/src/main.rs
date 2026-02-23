@@ -7,9 +7,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use owo_colors::OwoColorize;
 use shabka_core::assess::{self, AssessConfig, AssessmentResult, IssueCounts};
-use shabka_core::config::{
-    self, EmbeddingConfig, EmbeddingState, GraphConfig, ShabkaConfig, VALID_PROVIDERS,
-};
+use shabka_core::config::{self, EmbeddingState, GraphConfig, ShabkaConfig, VALID_PROVIDERS};
 use shabka_core::decay::{self, PruneConfig, PruneResult};
 use shabka_core::embedding::EmbeddingService;
 use shabka_core::graph;
@@ -411,15 +409,7 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
             let storage = make_storage(config)?;
             let embedder = EmbeddingService::from_config(&config.embedding)
                 .context("failed to create embedding service")?;
-            cmd_reembed(
-                &storage,
-                &embedder,
-                &config.embedding,
-                batch_size,
-                dry_run,
-                force,
-            )
-            .await
+            cmd_reembed(&storage, &embedder, batch_size, dry_run, force).await
         }
         Cli::Verify { id, status } => {
             let storage = make_storage(config)?;
@@ -1170,9 +1160,11 @@ async fn cmd_status(storage: &Storage, config: &ShabkaConfig, user_id: &str) -> 
                 println!("  {}   {}", "Base URL:".dimmed(), url);
             }
             // Check for embedding provider migration
-            if let Some(warning) =
-                EmbeddingState::migration_warning(&config.embedding, service.dimensions())
-            {
+            if let Some(warning) = EmbeddingState::migration_warning(
+                service.provider_name(),
+                service.model_id(),
+                service.dimensions(),
+            ) {
                 println!();
                 println!("  {}", warning.replace('\n', "\n  ").yellow());
             }
@@ -1752,18 +1744,25 @@ fn cmd_history(
 async fn cmd_reembed(
     storage: &Storage,
     embedder: &EmbeddingService,
-    config: &EmbeddingConfig,
     batch_size: usize,
     dry_run: bool,
     force: bool,
 ) -> Result<()> {
     let saved_state = EmbeddingState::load();
     let provider_changed = !saved_state.provider.is_empty()
-        && !saved_state.matches_config(config, embedder.dimensions());
+        && !saved_state.matches(
+            embedder.provider_name(),
+            embedder.model_id(),
+            embedder.dimensions(),
+        );
 
     // Check for migration warning before starting
     if provider_changed {
-        if let Some(warning) = EmbeddingState::migration_warning(config, embedder.dimensions()) {
+        if let Some(warning) = EmbeddingState::migration_warning(
+            embedder.provider_name(),
+            embedder.model_id(),
+            embedder.dimensions(),
+        ) {
             println!("{}", warning);
             println!();
         }
@@ -1888,7 +1887,11 @@ async fn cmd_reembed(
     println!("Done: {} re-embedded, {} errors", processed, errors);
 
     // Update embedding state so future runs know what provider was used
-    let mut state = EmbeddingState::from_config(config, embedder.dimensions());
+    let mut state = EmbeddingState::from_provider(
+        embedder.provider_name(),
+        embedder.model_id(),
+        embedder.dimensions(),
+    );
     state.last_reembed_at = chrono::Utc::now().to_rfc3339();
     if let Err(e) = state.save() {
         eprintln!("Warning: failed to save embedding state: {}", e);

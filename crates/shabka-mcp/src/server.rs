@@ -702,7 +702,8 @@ impl ShabkaServer {
         // Check for embedding migration once per session
         if !self.migration_checked.swap(true, Ordering::Relaxed) {
             if let Some(warning) = EmbeddingState::migration_warning(
-                &self.config.embedding,
+                self.embedder.provider_name(),
+                self.embedder.model_id(),
                 self.embedder.dimensions(),
             ) {
                 eprintln!("{warning}");
@@ -880,7 +881,11 @@ impl ShabkaServer {
             .map_err(to_mcp_error)?;
 
         // Update embedding state after successful save
-        let state = EmbeddingState::from_config(&self.config.embedding, self.embedder.dimensions());
+        let state = EmbeddingState::from_provider(
+            self.embedder.provider_name(),
+            self.embedder.model_id(),
+            self.embedder.dimensions(),
+        );
         let _ = state.save();
 
         for related_id in &params.related_to {
@@ -1040,7 +1045,11 @@ impl ShabkaServer {
     ) -> Result<CallToolResult, ErrorData> {
         let saved_state = EmbeddingState::load();
         let provider_changed = !saved_state.provider.is_empty()
-            && !saved_state.matches_config(&self.config.embedding, self.embedder.dimensions());
+            && !saved_state.matches(
+                self.embedder.provider_name(),
+                self.embedder.model_id(),
+                self.embedder.dimensions(),
+            );
         let full_reembed =
             params.force || provider_changed || saved_state.last_reembed_at.is_empty();
 
@@ -1129,8 +1138,11 @@ impl ShabkaServer {
         }
 
         // Update state
-        let mut state =
-            EmbeddingState::from_config(&self.config.embedding, self.embedder.dimensions());
+        let mut state = EmbeddingState::from_provider(
+            self.embedder.provider_name(),
+            self.embedder.model_id(),
+            self.embedder.dimensions(),
+        );
         state.last_reembed_at = chrono::Utc::now().to_rfc3339();
         let _ = state.save();
 

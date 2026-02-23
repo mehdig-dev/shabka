@@ -200,8 +200,11 @@ async fn analytics_page(State(state): State<Arc<AppState>>) -> Result<Html<Strin
         })
         .collect();
 
-    let migration_warning =
-        EmbeddingState::migration_warning(&state.config.embedding, state.embedding.dimensions());
+    let migration_warning = EmbeddingState::migration_warning(
+        state.embedding.provider_name(),
+        state.embedding.model_id(),
+        state.embedding.dimensions(),
+    );
 
     let tmpl = AnalyticsTemplate {
         total_memories: memories.len(),

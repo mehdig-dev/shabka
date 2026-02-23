@@ -661,33 +661,37 @@ impl EmbeddingState {
         Ok(())
     }
 
-    /// Build a state snapshot from the current config + actual dimensions.
-    pub fn from_config(config: &EmbeddingConfig, dimensions: usize) -> Self {
+    /// Build a state snapshot from the resolved provider values.
+    ///
+    /// Use the actual provider/model/dimensions from the `EmbeddingService`,
+    /// not the raw config values (which may contain defaults like `hash-128d`
+    /// even when ollama resolves to `nomic-embed-text`).
+    pub fn from_provider(provider: &str, model: &str, dimensions: usize) -> Self {
         Self {
-            provider: config.provider.clone(),
-            model: config.model.clone(),
+            provider: provider.to_string(),
+            model: model.to_string(),
             dimensions,
             last_updated: chrono::Utc::now().to_rfc3339(),
             last_reembed_at: String::new(),
         }
     }
 
-    /// Returns `true` when the saved state matches the current configuration.
-    pub fn matches_config(&self, config: &EmbeddingConfig, dimensions: usize) -> bool {
-        self.provider == config.provider
-            && self.model == config.model
-            && self.dimensions == dimensions
+    /// Returns `true` when the saved state matches the resolved provider values.
+    pub fn matches(&self, provider: &str, model: &str, dimensions: usize) -> bool {
+        self.provider == provider && self.model == model && self.dimensions == dimensions
     }
 
-    /// Returns a human-readable warning if the current config doesn't match
+    /// Returns a human-readable warning if the current provider doesn't match
     /// the saved state. Returns `None` if they match or if no prior state exists.
-    pub fn migration_warning(config: &EmbeddingConfig, dimensions: usize) -> Option<String> {
+    ///
+    /// Pass the resolved provider/model/dimensions from the `EmbeddingService`.
+    pub fn migration_warning(provider: &str, model: &str, dimensions: usize) -> Option<String> {
         let state = Self::load();
         // No prior state — nothing to warn about
         if state.provider.is_empty() {
             return None;
         }
-        if state.matches_config(config, dimensions) {
+        if state.matches(provider, model, dimensions) {
             return None;
         }
         Some(format!(
@@ -696,12 +700,7 @@ impl EmbeddingState {
              \x20 Current:  {} / {} ({}d)\n\
              \x20 Existing memories have incompatible embeddings.\n\
              \x20 Run `shabka reembed` to re-embed all memories with the new provider.",
-            state.provider,
-            state.model,
-            state.dimensions,
-            config.provider,
-            config.model,
-            dimensions,
+            state.provider, state.model, state.dimensions, provider, model, dimensions,
         ))
     }
 }
@@ -924,15 +923,14 @@ model = "hash-128d"
     }
 
     #[test]
-    fn test_embedding_state_matches_config() {
+    fn test_embedding_state_matches() {
         let state = EmbeddingState {
             provider: "hash".to_string(),
             model: "hash-128d".to_string(),
             dimensions: 128,
             ..Default::default()
         };
-        let config = EmbeddingConfig::default();
-        assert!(state.matches_config(&config, 128));
+        assert!(state.matches("hash", "hash-128d", 128));
     }
 
     #[test]
@@ -943,33 +941,22 @@ model = "hash-128d"
             dimensions: 128,
             ..Default::default()
         };
-        let config = EmbeddingConfig {
-            provider: "openai".to_string(),
-            model: "text-embedding-3-small".to_string(),
-            ..Default::default()
-        };
-        assert!(!state.matches_config(&config, 1536));
+        assert!(!state.matches("openai", "text-embedding-3-small", 1536));
     }
 
     #[test]
     fn test_migration_warning_no_state() {
         // Empty provider means no prior state — should return None
-        let config = EmbeddingConfig::default();
         let state = EmbeddingState::default();
         assert!(state.provider.is_empty());
         // migration_warning reads from disk; with no state file it returns None.
-        // We test the logic directly via matches_config instead.
-        assert!(state.matches_config(&config, 128) || state.provider.is_empty());
+        // We test the logic directly via matches instead.
+        assert!(state.matches("hash", "hash-128d", 128) || state.provider.is_empty());
     }
 
     #[test]
-    fn test_embedding_state_from_config() {
-        let config = EmbeddingConfig {
-            provider: "gemini".to_string(),
-            model: "text-embedding-004".to_string(),
-            ..Default::default()
-        };
-        let state = EmbeddingState::from_config(&config, 768);
+    fn test_embedding_state_from_provider() {
+        let state = EmbeddingState::from_provider("gemini", "text-embedding-004", 768);
         assert_eq!(state.provider, "gemini");
         assert_eq!(state.model, "text-embedding-004");
         assert_eq!(state.dimensions, 768);

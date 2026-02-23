@@ -187,8 +187,11 @@ async fn list_memories(
         })
         .collect();
 
-    let migration_warning =
-        EmbeddingState::migration_warning(&state.config.embedding, state.embedding.dimensions());
+    let migration_warning = EmbeddingState::migration_warning(
+        state.embedding.provider_name(),
+        state.embedding.model_id(),
+        state.embedding.dimensions(),
+    );
 
     let tmpl = MemoryListTemplate {
         memories,
