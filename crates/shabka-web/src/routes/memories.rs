@@ -124,41 +124,50 @@ async fn list_memories(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<ListParams>,
 ) -> Result<Html<String>, AppError> {
-    // Fetch a large batch for filtering/pagination
-    let query = TimelineQuery {
-        limit: 10000,
+    // Build a DB-level query with all filters pushed down
+    let filter_kind = params.kind.unwrap_or_default();
+    let filter_project = params.project.unwrap_or_default();
+
+    let kind_filter = if !filter_kind.is_empty() {
+        filter_kind.parse::<MemoryKind>().ok()
+    } else {
+        None
+    };
+    let project_filter = if !filter_project.is_empty() {
+        Some(filter_project.clone())
+    } else {
+        None
+    };
+
+    // Build a count query (same filters, no limit/offset)
+    let count_query = TimelineQuery {
+        limit: usize::MAX,
+        kind: kind_filter,
+        project_id: project_filter.clone(),
+        status: Some(MemoryStatus::Active),
         ..Default::default()
     };
-    let mut entries = state.storage.timeline(&query).await?;
-
-    // Filter by privacy
-    entries.retain(|e| shabka_core::sharing::is_visible(e.privacy, &e.created_by, &state.user_id));
-
-    // Filter by kind if specified
-    let filter_kind = params.kind.unwrap_or_default();
-    if !filter_kind.is_empty() {
-        if let Ok(k) = filter_kind.parse::<MemoryKind>() {
-            entries.retain(|m| m.kind == k);
-        }
-    }
-
-    // Filter by project if specified
-    let filter_project = params.project.unwrap_or_default();
-    if !filter_project.is_empty() {
-        entries.retain(|e| e.project_id.as_deref() == Some(filter_project.as_str()));
-    }
+    let total_count = state.storage.timeline_count(&count_query).await?;
 
     // Pagination
-    let total_count = entries.len();
     let total_pages = if total_count == 0 {
         1
     } else {
         total_count.div_ceil(PAGE_SIZE)
     };
     let page = params.page.unwrap_or(1).max(1).min(total_pages);
-    let start = (page - 1) * PAGE_SIZE;
-    let page_entries: Vec<TimelineEntry> =
-        entries.into_iter().skip(start).take(PAGE_SIZE).collect();
+    let offset = (page - 1) * PAGE_SIZE;
+
+    // Fetch only the page we need
+    let page_query = TimelineQuery {
+        limit: PAGE_SIZE,
+        offset,
+        kind: kind_filter,
+        project_id: project_filter,
+        status: Some(MemoryStatus::Active),
+        ..Default::default()
+    };
+    let page_entries = state.storage.timeline(&page_query).await?;
 
     // Fetch full memories to get accessed_at for staleness
     let ids: Vec<Uuid> = page_entries.iter().map(|e| e.id).collect();

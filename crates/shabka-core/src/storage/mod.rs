@@ -4,7 +4,7 @@ mod sqlite;
 
 pub use backend::StorageBackend;
 pub use helix::HelixStorage;
-pub use sqlite::SqliteStorage;
+pub use sqlite::{IntegrityReport, SqliteStorage};
 
 use crate::config::ShabkaConfig;
 use crate::error::{Result, ShabkaError};
@@ -117,6 +117,41 @@ impl Storage {
         match self {
             Storage::Sqlite(s) => s.schema_info().ok(),
             Storage::Helix(_) => None,
+        }
+    }
+
+    /// Run a database integrity check (SQLite only).
+    ///
+    /// Returns `None` for Helix storage.
+    pub fn integrity_check(&self) -> Option<IntegrityReport> {
+        match self {
+            Storage::Sqlite(s) => s.integrity_check().ok(),
+            Storage::Helix(_) => None,
+        }
+    }
+
+    /// Repair issues found by [`integrity_check`](Self::integrity_check) (SQLite only).
+    ///
+    /// Returns `(orphaned_embeddings_removed, broken_relations_removed)`,
+    /// or `None` for Helix storage.
+    pub fn repair(&self, report: &IntegrityReport) -> Option<(usize, usize)> {
+        match self {
+            Storage::Sqlite(s) => s.repair(report).ok(),
+            Storage::Helix(_) => None,
+        }
+    }
+
+    /// Return the total count of timeline entries matching the given filters,
+    /// ignoring `limit` and `offset`. For Helix, falls back to fetching all
+    /// entries and counting them.
+    pub async fn timeline_count(&self, query: &TimelineQuery) -> Result<usize> {
+        match self {
+            Storage::Sqlite(s) => s.timeline_count(query).await,
+            Storage::Helix(s) => {
+                // Helix doesn't have a native count query; fetch and count.
+                let entries = s.timeline(query).await?;
+                Ok(entries.len())
+            }
         }
     }
 }

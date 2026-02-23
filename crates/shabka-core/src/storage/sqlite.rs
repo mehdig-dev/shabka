@@ -11,6 +11,19 @@ use crate::error::{Result, ShabkaError};
 use crate::model::*;
 use crate::storage::StorageBackend;
 
+/// Report from a database integrity check (SQLite only).
+#[derive(Debug, Default)]
+pub struct IntegrityReport {
+    pub total_memories: usize,
+    pub total_embeddings: usize,
+    pub total_relations: usize,
+    pub total_sessions: usize,
+    pub orphaned_embeddings: Vec<String>,
+    pub broken_relations: Vec<(String, String)>,
+    pub missing_embeddings: usize,
+    pub sqlite_integrity_ok: bool,
+}
+
 /// Current schema version. Bump this when adding migrations.
 /// Existing DBs at version 0 get stamped to this on first open.
 const SCHEMA_VERSION: i32 = 1;
@@ -364,6 +377,128 @@ impl SqliteStorage {
             .ok();
 
         Ok((version, writer))
+    }
+
+    /// Run a full integrity check on the SQLite database.
+    ///
+    /// Returns an [`IntegrityReport`] with counts, orphaned embeddings,
+    /// broken relations, memories missing embeddings, and the result of
+    /// `PRAGMA integrity_check`.
+    pub fn integrity_check(&self) -> Result<IntegrityReport> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ShabkaError::Storage(format!("failed to acquire database lock: {e}")))?;
+
+        // Counts
+        let total_memories = conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get::<_, i64>(0))
+            .map_err(|e| ShabkaError::Storage(format!("count memories: {e}")))?
+            as usize;
+        let total_embeddings = conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map_err(|e| ShabkaError::Storage(format!("count embeddings: {e}")))?
+            as usize;
+        let total_relations = conn
+            .query_row("SELECT COUNT(*) FROM relations", [], |r| r.get::<_, i64>(0))
+            .map_err(|e| ShabkaError::Storage(format!("count relations: {e}")))?
+            as usize;
+        let total_sessions = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get::<_, i64>(0))
+            .map_err(|e| ShabkaError::Storage(format!("count sessions: {e}")))?
+            as usize;
+
+        // Orphaned embeddings: embedding rows whose memory_id has no matching memory
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.memory_id FROM embeddings e \
+                 LEFT JOIN memories m ON m.id = e.memory_id \
+                 WHERE m.id IS NULL",
+            )
+            .map_err(|e| ShabkaError::Storage(format!("prepare orphan query: {e}")))?;
+        let orphaned_embeddings: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .map_err(|e| ShabkaError::Storage(format!("orphan query: {e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Broken relations: relation rows where source or target memory is missing
+        let mut stmt = conn
+            .prepare(
+                "SELECT r.source_id, r.target_id FROM relations r \
+                 LEFT JOIN memories m1 ON m1.id = r.source_id \
+                 LEFT JOIN memories m2 ON m2.id = r.target_id \
+                 WHERE m1.id IS NULL OR m2.id IS NULL",
+            )
+            .map_err(|e| ShabkaError::Storage(format!("prepare broken-rel query: {e}")))?;
+        let broken_relations: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| ShabkaError::Storage(format!("broken-rel query: {e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Memories that have no embedding row
+        let missing_embeddings = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories m \
+                 LEFT JOIN embeddings e ON e.memory_id = m.id \
+                 WHERE e.memory_id IS NULL",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(|e| ShabkaError::Storage(format!("missing embeddings query: {e}")))?
+            as usize;
+
+        // SQLite built-in integrity check
+        let integrity: String = conn
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .map_err(|e| ShabkaError::Storage(format!("integrity_check pragma: {e}")))?;
+
+        Ok(IntegrityReport {
+            total_memories,
+            total_embeddings,
+            total_relations,
+            total_sessions,
+            orphaned_embeddings,
+            broken_relations,
+            missing_embeddings,
+            sqlite_integrity_ok: integrity == "ok",
+        })
+    }
+
+    /// Remove orphaned embeddings and broken relations identified by a
+    /// previous [`integrity_check`](Self::integrity_check) run.
+    ///
+    /// Returns `(orphaned_embeddings_removed, broken_relations_removed)`.
+    pub fn repair(&self, report: &IntegrityReport) -> Result<(usize, usize)> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ShabkaError::Storage(format!("failed to acquire database lock: {e}")))?;
+
+        let mut orphans_removed = 0;
+        for memory_id in &report.orphaned_embeddings {
+            orphans_removed += conn
+                .execute(
+                    "DELETE FROM embeddings WHERE memory_id = ?1",
+                    params![memory_id],
+                )
+                .map_err(|e| ShabkaError::Storage(format!("delete orphan embedding: {e}")))?;
+        }
+
+        let mut relations_removed = 0;
+        for (source_id, target_id) in &report.broken_relations {
+            relations_removed += conn
+                .execute(
+                    "DELETE FROM relations WHERE source_id = ?1 AND target_id = ?2",
+                    params![source_id, target_id],
+                )
+                .map_err(|e| ShabkaError::Storage(format!("delete broken relation: {e}")))?;
+        }
+
+        Ok((orphans_removed, relations_removed))
     }
 
     /// Run a blocking closure against the SQLite connection on the Tokio
@@ -882,6 +1017,16 @@ impl StorageBackend for SqliteStorage {
                 params.push(Box::new(status_to_str(status)));
                 idx += 1;
             }
+            if let Some(ref privacy) = query.privacy {
+                conditions.push(format!("m.privacy = ?{idx}"));
+                params.push(Box::new(privacy_to_str(privacy)));
+                idx += 1;
+            }
+            if let Some(ref created_by) = query.created_by {
+                conditions.push(format!("m.created_by = ?{idx}"));
+                params.push(Box::new(created_by.clone()));
+                idx += 1;
+            }
 
             let where_clause = if conditions.is_empty() {
                 String::new()
@@ -895,9 +1040,11 @@ impl StorageBackend for SqliteStorage {
                  FROM memories m
                  {where_clause}
                  ORDER BY m.created_at DESC
-                 LIMIT ?{idx}"
+                 LIMIT ?{idx} OFFSET ?{}",
+                idx + 1
             );
             params.push(Box::new(query.limit as i64));
+            params.push(Box::new(query.offset as i64));
 
             let param_refs: Vec<&dyn rusqlite::types::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
@@ -1131,6 +1278,86 @@ impl StorageBackend for SqliteStorage {
                 }
                 _ => ShabkaError::Storage(format!("failed to get session: {e}")),
             })
+        })
+        .await
+    }
+}
+
+// ── Additional query methods (not on the trait) ─────────────────────────
+
+impl SqliteStorage {
+    /// Return the total count of timeline entries matching the given filters,
+    /// ignoring `limit` and `offset`. Used for pagination metadata.
+    pub async fn timeline_count(&self, query: &TimelineQuery) -> Result<usize> {
+        let query = query.clone();
+        self.with_conn(move |conn| {
+            let mut conditions: Vec<String> = Vec::new();
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+            let mut idx = 1;
+
+            if let Some(ref id) = query.memory_id {
+                conditions.push(format!("m.id = ?{idx}"));
+                params.push(Box::new(id.to_string()));
+                idx += 1;
+            }
+            if let Some(ref start) = query.start {
+                conditions.push(format!("m.created_at >= ?{idx}"));
+                params.push(Box::new(start.to_rfc3339()));
+                idx += 1;
+            }
+            if let Some(ref end) = query.end {
+                conditions.push(format!("m.created_at <= ?{idx}"));
+                params.push(Box::new(end.to_rfc3339()));
+                idx += 1;
+            }
+            if let Some(ref session_id) = query.session_id {
+                conditions.push(format!("m.session_id = ?{idx}"));
+                params.push(Box::new(session_id.to_string()));
+                idx += 1;
+            }
+            if let Some(ref project_id) = query.project_id {
+                conditions.push(format!("m.project_id = ?{idx}"));
+                params.push(Box::new(project_id.clone()));
+                idx += 1;
+            }
+            if let Some(ref kind) = query.kind {
+                conditions.push(format!("m.kind = ?{idx}"));
+                params.push(Box::new(kind_to_str(kind)));
+                idx += 1;
+            }
+            if let Some(ref status) = query.status {
+                conditions.push(format!("m.status = ?{idx}"));
+                params.push(Box::new(status_to_str(status)));
+                idx += 1;
+            }
+            if let Some(ref privacy) = query.privacy {
+                conditions.push(format!("m.privacy = ?{idx}"));
+                params.push(Box::new(privacy_to_str(privacy)));
+                idx += 1;
+            }
+            if let Some(ref created_by) = query.created_by {
+                conditions.push(format!("m.created_by = ?{idx}"));
+                params.push(Box::new(created_by.clone()));
+                // idx += 1; // last field, no need to increment
+            }
+
+            let where_clause = if conditions.is_empty() {
+                String::new()
+            } else {
+                format!("WHERE {}", conditions.join(" AND "))
+            };
+
+            let sql = format!("SELECT COUNT(*) FROM memories m {where_clause}");
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+
+            let count: i64 = conn
+                .query_row(&sql, param_refs.as_slice(), |row| row.get(0))
+                .map_err(|e| {
+                    ShabkaError::Storage(format!("failed to count timeline entries: {e}"))
+                })?;
+
+            Ok(count as usize)
         })
         .await
     }
@@ -1797,5 +2024,211 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM metadata", [], |row| row.get(0))
             .unwrap();
         assert!(count >= 1, "metadata table should have at least one row");
+    }
+
+    // ── timeline offset, privacy, count tests ────────────────────────
+
+    #[tokio::test]
+    async fn test_timeline_with_offset() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        // Insert 5 memories with different timestamps
+        for i in 0..5 {
+            let mut mem = test_memory();
+            mem.title = format!("Memory {i}");
+            mem.content = format!("Content {i}");
+            mem.created_at = Utc::now() - chrono::Duration::milliseconds((5 - i) * 100);
+            mem.updated_at = mem.created_at;
+            storage.save_memory(&mem, None).await.unwrap();
+        }
+
+        let query = TimelineQuery {
+            limit: 2,
+            offset: 2,
+            ..Default::default()
+        };
+        let results = storage.timeline(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+        // With DESC ordering, offset=2 skips the 2 newest
+        // We have 5 items ordered newest-first, offset 2 gives items at index 2,3
+    }
+
+    #[tokio::test]
+    async fn test_timeline_with_privacy_filter() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        // Insert memories with different privacy levels
+        for (i, privacy) in [
+            MemoryPrivacy::Public,
+            MemoryPrivacy::Private,
+            MemoryPrivacy::Public,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut mem = test_memory();
+            mem.title = format!("Memory {privacy:?} {i}");
+            mem.privacy = *privacy;
+            storage.save_memory(&mem, None).await.unwrap();
+        }
+
+        let query = TimelineQuery {
+            privacy: Some(MemoryPrivacy::Private),
+            limit: 100,
+            ..Default::default()
+        };
+        let results = storage.timeline(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_timeline_count() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        for i in 0..5 {
+            let mut mem = test_memory();
+            mem.title = format!("Memory {i}");
+            mem.content = format!("Content {i}");
+            storage.save_memory(&mem, None).await.unwrap();
+        }
+
+        let query = TimelineQuery::default();
+        let count = storage.timeline_count(&query).await.unwrap();
+        assert_eq!(count, 5);
+
+        // Count with filter that matches none
+        let query = TimelineQuery {
+            kind: Some(MemoryKind::Decision),
+            ..Default::default()
+        };
+        let count = storage.timeline_count(&query).await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    // ── integrity check tests ────────────────────────────────────────
+
+    #[test]
+    fn test_integrity_check_clean_db() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let report = storage.integrity_check().unwrap();
+        assert!(report.sqlite_integrity_ok);
+        assert!(report.orphaned_embeddings.is_empty());
+        assert!(report.broken_relations.is_empty());
+        assert_eq!(report.total_memories, 0);
+        assert_eq!(report.total_embeddings, 0);
+        assert_eq!(report.total_relations, 0);
+        assert_eq!(report.total_sessions, 0);
+        assert_eq!(report.missing_embeddings, 0);
+    }
+
+    #[tokio::test]
+    async fn test_integrity_check_with_data() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let mem = test_memory();
+        storage.save_memory(&mem, None).await.unwrap();
+
+        let report = storage.integrity_check().unwrap();
+        assert!(report.sqlite_integrity_ok);
+        assert_eq!(report.total_memories, 1);
+        assert_eq!(report.missing_embeddings, 1); // no embedding was saved
+        assert!(report.orphaned_embeddings.is_empty());
+        assert!(report.broken_relations.is_empty());
+    }
+
+    #[test]
+    fn test_integrity_check_detects_orphaned_embedding() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        // Insert an embedding directly without a corresponding memory
+        {
+            let conn = storage.conn.lock().unwrap();
+            // Must disable foreign keys temporarily to insert orphan
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "INSERT INTO embeddings (memory_id, vector, dimensions) VALUES (?1, ?2, ?3)",
+                params!["nonexistent-id", vec![0u8; 128], 128],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+
+        let report = storage.integrity_check().unwrap();
+        assert_eq!(report.orphaned_embeddings.len(), 1);
+        assert_eq!(report.orphaned_embeddings[0], "nonexistent-id");
+    }
+
+    #[test]
+    fn test_integrity_repair_removes_orphaned_embeddings() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "INSERT INTO embeddings (memory_id, vector, dimensions) VALUES (?1, ?2, ?3)",
+                params!["orphan-1", vec![0u8; 128], 128],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO embeddings (memory_id, vector, dimensions) VALUES (?1, ?2, ?3)",
+                params!["orphan-2", vec![0u8; 128], 128],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+
+        let report = storage.integrity_check().unwrap();
+        assert_eq!(report.orphaned_embeddings.len(), 2);
+
+        let (orphans, relations) = storage.repair(&report).unwrap();
+        assert_eq!(orphans, 2);
+        assert_eq!(relations, 0);
+
+        // Verify they are gone
+        let report_after = storage.integrity_check().unwrap();
+        assert!(report_after.orphaned_embeddings.is_empty());
+    }
+
+    #[test]
+    fn test_integrity_check_detects_broken_relations() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "INSERT INTO relations (source_id, target_id, relation_type, strength) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params!["missing-src", "missing-tgt", "related", 0.5],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+
+        let report = storage.integrity_check().unwrap();
+        assert_eq!(report.broken_relations.len(), 1);
+        assert_eq!(report.broken_relations[0].0, "missing-src");
+        assert_eq!(report.broken_relations[0].1, "missing-tgt");
+    }
+
+    #[test]
+    fn test_integrity_repair_removes_broken_relations() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "INSERT INTO relations (source_id, target_id, relation_type, strength) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params!["missing-a", "missing-b", "related", 0.5],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+
+        let report = storage.integrity_check().unwrap();
+        assert_eq!(report.broken_relations.len(), 1);
+
+        let (orphans, relations) = storage.repair(&report).unwrap();
+        assert_eq!(orphans, 0);
+        assert_eq!(relations, 1);
+
+        // Verify relation is gone
+        let report_after = storage.integrity_check().unwrap();
+        assert!(report_after.broken_relations.is_empty());
     }
 }

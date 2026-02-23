@@ -14,6 +14,7 @@ use shabka_core::llm::LlmService;
 use shabka_core::storage::{create_backend, Storage};
 use shabka_mcp::ShabkaServer;
 use tokio_util::sync::CancellationToken;
+use tower_http::trace::TraceLayer;
 
 pub struct AppState {
     pub storage: Storage,
@@ -76,7 +77,8 @@ async fn main() -> Result<()> {
     let app = routes::router()
         .with_state(state)
         .nest_service("/mcp", mcp_service)
-        .layer(tower_http::cors::CorsLayer::permissive());
+        .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http());
 
     let addr = format!("{}:{}", config.web.host, config.web.port);
     tracing::info!("shabka-web listening on http://{addr}");

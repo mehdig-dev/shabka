@@ -233,6 +233,12 @@ enum Cli {
         #[arg(long)]
         json: bool,
     },
+    /// Check database integrity
+    Check {
+        /// Auto-repair: remove orphaned embeddings and broken relations
+        #[arg(long)]
+        repair: bool,
+    },
     /// Launch interactive TUI for browsing memories
     Tui,
     /// Populate sample memories for demonstration
@@ -459,6 +465,10 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
         } => {
             let storage = make_storage(config)?;
             cmd_list(&storage, kind, status, project, limit, json).await
+        }
+        Cli::Check { repair } => {
+            let storage = make_storage(config)?;
+            cmd_check(&storage, repair).await
         }
         Cli::Tui => tui::run_tui(config).await,
         Cli::Demo { clean } => {
@@ -2957,6 +2967,81 @@ async fn demo_clean(storage: &Storage, history: &HistoryLogger, user_id: &str) -
         "✓".green().bold(),
         demo_entries.len()
     );
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// check
+// ---------------------------------------------------------------------------
+
+async fn cmd_check(storage: &Storage, repair: bool) -> Result<()> {
+    println!("Database Integrity Check");
+    println!("========================\n");
+
+    let report = match storage.integrity_check() {
+        Some(r) => r,
+        None => {
+            println!("  Integrity check is only available for SQLite storage.");
+            return Ok(());
+        }
+    };
+
+    let missing_note = if report.missing_embeddings > 0 {
+        format!(" ({} missing)", report.missing_embeddings)
+    } else {
+        String::new()
+    };
+
+    println!("  Memories:    {}", report.total_memories);
+    println!("  Embeddings:  {}{}", report.total_embeddings, missing_note);
+    println!("  Relations:   {}", report.total_relations);
+    println!("  Sessions:    {}", report.total_sessions);
+    println!(
+        "  SQLite:      {}",
+        if report.sqlite_integrity_ok {
+            "ok"
+        } else {
+            "FAILED"
+        }
+    );
+
+    let has_issues = !report.orphaned_embeddings.is_empty()
+        || !report.broken_relations.is_empty()
+        || report.missing_embeddings > 0;
+
+    if has_issues {
+        println!("\n  Issues:");
+        if !report.orphaned_embeddings.is_empty() {
+            println!(
+                "    {} orphaned embeddings",
+                report.orphaned_embeddings.len()
+            );
+        }
+        if !report.broken_relations.is_empty() {
+            println!("    {} broken relations", report.broken_relations.len());
+        }
+        if report.missing_embeddings > 0 {
+            println!(
+                "    {} memories without embeddings (run `shabka reembed`)",
+                report.missing_embeddings
+            );
+        }
+    }
+
+    if repair && (!report.orphaned_embeddings.is_empty() || !report.broken_relations.is_empty()) {
+        println!("\n  Repairing...");
+        if let Some((orphans, relations)) = storage.repair(&report) {
+            println!("    Removed {} orphaned embeddings", orphans);
+            println!("    Removed {} broken relations", relations);
+        }
+    }
+
+    let pass = report.sqlite_integrity_ok
+        && report.orphaned_embeddings.is_empty()
+        && report.broken_relations.is_empty();
+
+    println!("\n  Result: {}", if pass { "PASS" } else { "ISSUES FOUND" });
 
     Ok(())
 }

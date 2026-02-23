@@ -45,7 +45,7 @@ rig-core = { version = "0.31", default-features = false, features = ["reqwest-ru
 # Web
 axum = "0.8"
 askama = "0.15"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }

@@ -436,11 +436,17 @@ pub struct TimelineQuery {
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default)]
+    pub offset: usize,
+    #[serde(default)]
     pub project_id: Option<String>,
     #[serde(default)]
     pub kind: Option<MemoryKind>,
     #[serde(default)]
     pub status: Option<MemoryStatus>,
+    #[serde(default)]
+    pub privacy: Option<MemoryPrivacy>,
+    #[serde(default)]
+    pub created_by: Option<String>,
 }
 
 impl Default for TimelineQuery {
@@ -451,9 +457,12 @@ impl Default for TimelineQuery {
             end: None,
             session_id: None,
             limit: default_limit(),
+            offset: 0,
             project_id: None,
             kind: None,
             status: None,
+            privacy: None,
+            created_by: None,
         }
     }
 }
