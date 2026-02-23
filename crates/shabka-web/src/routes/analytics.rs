@@ -269,11 +269,16 @@ async fn archive_stale(State(state): State<Arc<AppState>>) -> Result<Response, A
         }
     }
 
+    let remaining = stale_memories.len() - archived;
+    let color = if remaining == 0 {
+        "var(--success)"
+    } else {
+        "var(--warning)"
+    };
     let html = format!(
-        "<div style=\"font-size:2rem;font-weight:700;color:var(--success)\">0</div>\
+        "<div style=\"font-size:2rem;font-weight:700;color:{color}\">{remaining}</div>\
          <div style=\"color:var(--text-dim);font-size:0.85rem\">Stale</div>\
-         <div style=\"font-size:0.75rem;color:var(--success);margin-top:0.25rem\">Archived {} memories</div>",
-        archived
+         <div style=\"font-size:0.75rem;color:var(--success);margin-top:0.25rem\">Archived {archived} memories</div>"
     );
 
     let mut headers = HeaderMap::new();

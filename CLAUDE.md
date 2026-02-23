@@ -23,7 +23,7 @@
 ## Dev Commands
 
 - `just build` — build all crates
-- `just test` — run unit tests (434 tests)
+- `just test` — run unit tests (440 tests)
 - `just check` — clippy + tests
 - `just test-helix` — HelixDB integration tests (requires: `just db`)
 - `just test-ollama` — Ollama integration tests (requires: Ollama + HelixDB)
