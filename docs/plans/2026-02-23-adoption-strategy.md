@@ -116,9 +116,82 @@
 
 ---
 
+## Week 5-6: Memory Architecture Improvements (from LangChain learnings)
+
+Insights from [LangChain's Agent Builder memory system](https://blog.langchain.com/how-we-built-agent-builders-memory-system/) using the COALA framework (procedural / semantic / episodic memory). These are small, targeted code changes that close real gaps competitors haven't solved either.
+
+### Task 11: Add `remember` MCP tool for procedural memory
+
+**Problem:** Shabka captures facts (semantic memory) but has no dedicated path for **rules and preferences** (procedural memory) — e.g. "always use bun", "this project uses tabs". LangChain found procedural memory is the highest-value category for coding agents, storing it in `AGENTS.md`. Shabka has `Procedure` as a MemoryKind but nothing guides agents to use it for standing rules.
+
+**Action:**
+- [ ] Add `remember` MCP tool — thin wrapper around `save_memory` with `kind: Procedure`, `importance: 0.9`
+- [ ] Tool description: "Save a standing rule or preference that should persist across sessions"
+- [ ] Input: just a `rule` string (no title/content split — the tool formats it)
+- [ ] Auto-tags with `["rule", "preference"]`
+- [ ] Document in README as the "teach your agent" pathway
+- [ ] Add test
+
+**Why this matters for adoption:** Users can tell their agent "remember: always use bun" and it Just Works. That's a demo-worthy moment.
+
+### Task 12: Add memory review/approval mode
+
+**Problem:** LangChain requires human approval for all memory writes to prevent prompt injection. Shabka's hooks auto-capture without review — a security and trust concern for potential adopters.
+
+**Action:**
+- [ ] Add `[capture] review_mode = false` config option (default off for backward compat)
+- [ ] When `true`, new hook-captured memories get `status: Pending` instead of `Active`
+- [ ] Pending memories excluded from search/context results
+- [ ] Add `shabka review` CLI command — lists pending memories, approve/reject interactively
+- [ ] TUI: show pending count badge on status bar, add review screen
+- [ ] Web: add "Pending Review" filter on list page
+- [ ] Add tests for pending status filtering
+
+**Why this matters for adoption:** "Human-in-the-loop memory" is a trust signal. Enterprise/security-conscious users won't adopt without it.
+
+### Task 13: Add scheduled auto-consolidation
+
+**Problem:** LangChain found agents are terrible at compacting/generalizing memories — they list every specific case instead of updating general rules. Shabka has `consolidate` but it's manual-only. Over time, memory stores bloat with near-duplicates.
+
+**Action:**
+- [ ] Add `[consolidate]` config section:
+  ```toml
+  [consolidate]
+  auto = false
+  interval = "daily"      # "daily" | "weekly" | "on_startup"
+  min_cluster_size = 3    # only consolidate when 3+ similar memories exist
+  dry_run = false          # preview consolidation without applying
+  ```
+- [ ] `on_startup` mode: run consolidation check when `shabka-mcp` starts (non-blocking background task)
+- [ ] `daily`/`weekly`: check timestamp in state file, run if interval elapsed
+- [ ] `shabka consolidate --auto` CLI command for manual trigger with auto settings
+- [ ] Log consolidation actions to history trail
+- [ ] Add tests for interval checking and config parsing
+
+**Why this matters for adoption:** "Self-maintaining memory" is a differentiator. Mem0 and Claude-Mem both struggle with memory bloat. Marketing angle: "Shabka automatically consolidates duplicate memories so your context stays clean."
+
+### Task 14: Position COALA framework in docs and README
+
+**Problem:** Shabka already implements all three COALA memory types but doesn't market it that way. LangChain explicitly chose NOT to implement episodic memory at launch — Shabka already has it (session summaries + history audit trail).
+
+**Action:**
+- [ ] Add "Memory Architecture" section to README explaining the three types:
+  | COALA Type | Shabka Feature | How It Works |
+  |-----------|---------------|-------------|
+  | Procedural | `remember` tool + Procedure kind | Standing rules injected via `get_context` |
+  | Semantic | All other memory kinds | Facts, decisions, insights — searchable + ranked |
+  | Episodic | Session summaries + history trail | What happened, when, and why — full audit log |
+- [ ] Reference the COALA paper (adds academic credibility)
+- [ ] Add to comparison table: "Full COALA memory model" as a row (Shabka: Yes, Mem0: Partial, Claude-Mem: No)
+- [ ] Update mdbook docs with a "Memory Types" chapter
+
+**Why this matters for adoption:** Academic framing gives Shabka instant credibility with the AI engineering audience. LangChain chose this framework — riding their coattails here is smart positioning.
+
+---
+
 ## Future Quarter: Bigger Bets (Not Yet)
 
-These are worth doing but only after Weeks 1-4 generate initial traction:
+These are worth doing but only after Weeks 1-6 generate initial traction:
 
 - **TypeScript SDK** — second-biggest audience after Python
 - **Hosted demo / playground** — try without installing
@@ -141,10 +214,11 @@ These are worth doing but only after Weeks 1-4 generate initial traction:
 
 ## Success Metrics
 
-| Metric | Week 1 | Week 4 | Month 3 |
+| Metric | Week 2 | Week 6 | Month 3 |
 |--------|--------|--------|---------|
 | GitHub stars | current | +50 | +500 |
 | crates.io downloads | current | +100 | +1000 |
 | PyPI downloads | 0 | first | +500 |
 | HN upvotes | 0 | 20+ | — |
 | GitHub issues from external users | 0 | 3+ | 20+ |
+| Memory consolidation events | — | measurable | auto-running |
