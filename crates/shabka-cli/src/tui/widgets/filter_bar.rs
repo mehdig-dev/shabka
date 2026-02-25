@@ -33,6 +33,7 @@ impl Widget for FilterBar {
                     shabka_core::model::MemoryKind::Fact => "Fact",
                     shabka_core::model::MemoryKind::Lesson => "Les",
                     shabka_core::model::MemoryKind::Todo => "Todo",
+                    shabka_core::model::MemoryKind::Procedure => "Proc",
                 },
             };
 

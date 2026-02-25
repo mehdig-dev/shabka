@@ -180,6 +180,7 @@ pub enum MemoryKind {
     Fact,
     Lesson,
     Todo,
+    Procedure,
 }
 
 impl std::fmt::Display for MemoryKind {
@@ -194,6 +195,7 @@ impl std::fmt::Display for MemoryKind {
             Self::Fact => write!(f, "fact"),
             Self::Lesson => write!(f, "lesson"),
             Self::Todo => write!(f, "todo"),
+            Self::Procedure => write!(f, "procedure"),
         }
     }
 }
@@ -212,6 +214,7 @@ impl std::str::FromStr for MemoryKind {
             "fact" => Ok(Self::Fact),
             "lesson" => Ok(Self::Lesson),
             "todo" => Ok(Self::Todo),
+            "procedure" => Ok(Self::Procedure),
             _ => Err(format!("unknown memory kind: {s}")),
         }
     }
@@ -262,6 +265,7 @@ pub enum MemoryStatus {
     Active,
     Archived,
     Superseded,
+    Pending,
 }
 
 impl std::fmt::Display for MemoryStatus {
@@ -270,6 +274,7 @@ impl std::fmt::Display for MemoryStatus {
             Self::Active => write!(f, "active"),
             Self::Archived => write!(f, "archived"),
             Self::Superseded => write!(f, "superseded"),
+            Self::Pending => write!(f, "pending"),
         }
     }
 }

@@ -74,6 +74,7 @@ fn test_memory_kind_roundtrip() {
         MemoryKind::Fact,
         MemoryKind::Lesson,
         MemoryKind::Todo,
+        MemoryKind::Procedure,
     ];
 
     for kind in kinds {
@@ -307,4 +308,36 @@ fn test_memory_serde_without_verification() {
 
     let deserialized: Memory = serde_json::from_value(json).unwrap();
     assert_eq!(deserialized.verification, VerificationStatus::Unverified);
+}
+
+#[test]
+fn test_procedure_kind_parse() {
+    use std::str::FromStr;
+    let kind = MemoryKind::from_str("procedure").unwrap();
+    assert_eq!(kind, MemoryKind::Procedure);
+    assert_eq!(kind.to_string(), "procedure");
+}
+
+#[test]
+fn test_pending_status_display() {
+    let status = MemoryStatus::Pending;
+    assert_eq!(status.to_string(), "pending");
+}
+
+#[test]
+fn test_procedure_kind_serde() {
+    let kind = MemoryKind::Procedure;
+    let json = serde_json::to_string(&kind).unwrap();
+    assert_eq!(json, "\"procedure\"");
+    let parsed: MemoryKind = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, MemoryKind::Procedure);
+}
+
+#[test]
+fn test_pending_status_serde() {
+    let status = MemoryStatus::Pending;
+    let json = serde_json::to_string(&status).unwrap();
+    assert_eq!(json, "\"pending\"");
+    let parsed: MemoryStatus = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, MemoryStatus::Pending);
 }

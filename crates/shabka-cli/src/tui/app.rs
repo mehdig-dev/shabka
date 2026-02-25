@@ -31,6 +31,7 @@ pub const CREATE_KINDS: &[MemoryKind] = &[
     MemoryKind::Fact,
     MemoryKind::Lesson,
     MemoryKind::Todo,
+    MemoryKind::Procedure,
 ];
 
 /// All memory kinds for filter cycling.
@@ -45,6 +46,7 @@ pub const ALL_KINDS: &[Option<MemoryKind>] = &[
     Some(MemoryKind::Fact),
     Some(MemoryKind::Lesson),
     Some(MemoryKind::Todo),
+    Some(MemoryKind::Procedure),
 ];
 
 /// Central application state.
@@ -576,6 +578,7 @@ impl App {
             Some(MemoryKind::Fact) => "Fact",
             Some(MemoryKind::Lesson) => "Lesson",
             Some(MemoryKind::Todo) => "Todo",
+            Some(MemoryKind::Procedure) => "Procedure",
         }
     }
 
@@ -698,7 +701,7 @@ mod tests {
 
         // Wrap around left
         app.handle_key(key(KeyCode::Left));
-        assert_eq!(app.filter_label(), "Todo");
+        assert_eq!(app.filter_label(), "Procedure");
     }
 
     #[test]

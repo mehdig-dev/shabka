@@ -193,6 +193,7 @@ pub struct StatusCounts {
     pub active: usize,
     pub archived: usize,
     pub superseded: usize,
+    pub pending: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1008,6 +1009,7 @@ async fn stats(State(state): State<Arc<AppState>>) -> Result<Json<StatsResponse>
     let mut active = 0usize;
     let mut archived = 0usize;
     let mut superseded = 0usize;
+    let mut pending = 0usize;
 
     for m in &memories {
         *kind_counts.entry(m.kind.to_string()).or_insert(0usize) += 1;
@@ -1015,6 +1017,7 @@ async fn stats(State(state): State<Arc<AppState>>) -> Result<Json<StatsResponse>
             MemoryStatus::Active => active += 1,
             MemoryStatus::Archived => archived += 1,
             MemoryStatus::Superseded => superseded += 1,
+            MemoryStatus::Pending => pending += 1,
         }
     }
 
@@ -1040,6 +1043,7 @@ async fn stats(State(state): State<Arc<AppState>>) -> Result<Json<StatsResponse>
             active,
             archived,
             superseded,
+            pending,
         },
         total_relations,
         embedding_provider: state.embedding.provider_name().to_string(),
@@ -1179,6 +1183,7 @@ mod tests {
                 active: 30,
                 archived: 10,
                 superseded: 2,
+                pending: 0,
             },
             total_relations: 15,
             embedding_provider: "hash".to_string(),

@@ -91,6 +91,7 @@ async fn analytics_page(State(state): State<Arc<AppState>>) -> Result<Html<Strin
             MemoryStatus::Active => active_count += 1,
             MemoryStatus::Archived => archived_count += 1,
             MemoryStatus::Superseded => superseded_count += 1,
+            MemoryStatus::Pending => {} // Pending memories counted but not charted
         }
     }
 
