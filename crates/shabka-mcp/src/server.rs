@@ -44,7 +44,7 @@ pub struct SaveMemoryParams {
     pub content: String,
 
     #[schemars(
-        description = "Kind of memory: observation, decision, pattern, error, fix, preference, fact, lesson, or todo"
+        description = "Kind of memory: observation, decision, pattern, error, fix, preference, fact, lesson, todo, or procedure"
     )]
     pub kind: String,
 
@@ -69,6 +69,16 @@ pub struct SaveMemoryParams {
     pub privacy: Option<String>,
 
     #[schemars(description = "Project ID to associate this memory with (optional)")]
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RememberParams {
+    #[schemars(description = "The rule, preference, or instruction to remember across sessions")]
+    pub rule: String,
+
+    #[schemars(description = "Project ID to scope this rule to (optional, omit for global)")]
     #[serde(default)]
     pub project_id: Option<String>,
 }
@@ -128,7 +138,7 @@ pub struct UpdateMemoryParams {
     #[serde(default)]
     pub importance: Option<f32>,
 
-    #[schemars(description = "New status: active, archived, superseded (optional)")]
+    #[schemars(description = "New status: active, archived, superseded, pending (optional)")]
     #[serde(default)]
     pub status: Option<String>,
 
@@ -301,7 +311,7 @@ pub struct SessionMemoryInput {
     pub content: String,
 
     #[schemars(
-        description = "Kind of memory: observation, decision, pattern, error, fix, preference, fact, lesson, or todo"
+        description = "Kind of memory: observation, decision, pattern, error, fix, preference, fact, lesson, todo, or procedure"
     )]
     pub kind: String,
 
@@ -928,6 +938,35 @@ impl ShabkaServer {
         Ok(CallToolResult::success(vec![Content::text(
             response.to_string(),
         )]))
+    }
+
+    #[tool(
+        name = "remember",
+        description = "Save a standing rule or preference that should persist across sessions. Use this when the user says 'remember', 'always', 'never', or 'from now on'. Examples: 'always use snake_case', 'never commit without tests', 'prefer Rust over Python'."
+    )]
+    async fn remember(
+        &self,
+        Parameters(params): Parameters<RememberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let title = if params.rule.len() > 100 {
+            format!("{}...", &params.rule[..97])
+        } else {
+            params.rule.clone()
+        };
+
+        let save_params = SaveMemoryParams {
+            title,
+            content: params.rule,
+            kind: "procedure".to_string(),
+            tags: vec!["rule".to_string(), "preference".to_string()],
+            importance: 0.9,
+            scope: None,
+            related_to: Vec::new(),
+            privacy: None,
+            project_id: params.project_id,
+        };
+
+        self.save_memory(Parameters(save_params)).await
     }
 
     #[tool(
@@ -2437,6 +2476,56 @@ mod tests {
         assert!(
             result.is_err(),
             "consolidate without LLM should return error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remember_tool_creates_procedure() {
+        let server = test_server();
+        let params = RememberParams {
+            rule: "Always use snake_case for Rust function names".to_string(),
+            project_id: Some("shabka".to_string()),
+        };
+        let result = server.remember(Parameters(params)).await;
+        assert!(result.is_ok(), "remember failed: {result:?}");
+        let result = result.unwrap();
+        let text = extract_text(&result);
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["action"].as_str().unwrap(), "added");
+        assert_eq!(json["kind"].as_str().unwrap(), "procedure");
+
+        // Verify the memory was actually saved with correct properties
+        let id = json["id"].as_str().unwrap().to_string();
+        let get_params = GetMemoriesParams {
+            ids: vec![id.clone()],
+        };
+        let get_result = server.get_memories(Parameters(get_params)).await.unwrap();
+        let memories: Vec<serde_json::Value> =
+            serde_json::from_str(extract_text(&get_result)).unwrap();
+        assert_eq!(memories.len(), 1);
+
+        let memory = &memories[0]["memory"];
+        assert_eq!(memory["kind"].as_str().unwrap(), "procedure");
+        assert_eq!(
+            memory["importance"].as_f64().unwrap(),
+            0.9,
+            "importance should be 0.9"
+        );
+        let tags: Vec<&str> = memory["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert!(tags.contains(&"rule"), "tags should contain 'rule'");
+        assert!(
+            tags.contains(&"preference"),
+            "tags should contain 'preference'"
+        );
+        assert_eq!(
+            memory["project_id"].as_str().unwrap(),
+            "shabka",
+            "project_id should be set"
         );
     }
 }
