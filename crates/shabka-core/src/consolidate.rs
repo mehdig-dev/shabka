@@ -52,6 +52,16 @@ pub struct ConsolidateConfig {
     /// Minimum age in days before a memory is eligible for consolidation.
     #[serde(default = "default_min_age")]
     pub min_age_days: u64,
+    /// Enable automatic consolidation on MCP server startup.
+    #[serde(default)]
+    pub auto: bool,
+    /// How often to run auto-consolidation: "daily", "weekly", or "on_startup".
+    #[serde(default = "default_interval")]
+    pub interval: String,
+}
+
+fn default_interval() -> String {
+    "daily".to_string()
 }
 
 fn default_min_cluster() -> usize {
@@ -74,6 +84,8 @@ impl Default for ConsolidateConfig {
             similarity_threshold: default_sim_threshold(),
             max_cluster_size: default_max_cluster(),
             min_age_days: default_min_age(),
+            auto: false,
+            interval: default_interval(),
         }
     }
 }
