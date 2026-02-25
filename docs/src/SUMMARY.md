@@ -8,6 +8,10 @@
 - [Quick Start](getting-started/quickstart.md)
 - [Configuration](getting-started/configuration.md)
 
+# Concepts
+
+- [Memory Types](concepts/memory-types.md)
+
 # User Guide
 
 - [CLI Reference](guide/cli.md)
