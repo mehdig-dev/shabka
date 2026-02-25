@@ -36,7 +36,7 @@ enum Cli {
     Search {
         /// Search query
         query: String,
-        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo)
+        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo, procedure)
         #[arg(short, long)]
         kind: Option<String>,
         /// Maximum number of results
@@ -199,13 +199,13 @@ enum Cli {
     Delete {
         /// Memory ID to delete (full UUID or short 8-char prefix)
         id: Option<String>,
-        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo)
+        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo, procedure)
         #[arg(short, long)]
         kind: Option<String>,
         /// Filter by project
         #[arg(short, long)]
         project: Option<String>,
-        /// Filter by status (active, archived, superseded)
+        /// Filter by status (active, archived, superseded, pending)
         #[arg(short, long)]
         status: Option<String>,
         /// Required for bulk deletion (when using filters instead of a single ID)
@@ -217,10 +217,10 @@ enum Cli {
     },
     /// List memories with optional filters
     List {
-        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo)
+        /// Filter by memory kind (observation, decision, pattern, error, fix, preference, fact, lesson, todo, procedure)
         #[arg(short, long)]
         kind: Option<String>,
-        /// Filter by status (active, archived, superseded)
+        /// Filter by status (active, archived, superseded, pending)
         #[arg(short, long)]
         status: Option<String>,
         /// Filter by project
@@ -246,6 +246,21 @@ enum Cli {
         /// Remove demo memories instead of creating them
         #[arg(long)]
         clean: bool,
+    },
+    /// Review pending memories (approve or reject auto-captured memories)
+    Review {
+        /// List pending memories without taking action
+        #[arg(long)]
+        list: bool,
+        /// Approve a specific memory by ID (full UUID or short prefix)
+        #[arg(long)]
+        approve: Option<String>,
+        /// Reject (archive) a specific memory by ID (full UUID or short prefix)
+        #[arg(long)]
+        reject: Option<String>,
+        /// Approve all pending memories at once
+        #[arg(long)]
+        approve_all: bool,
     },
 }
 
@@ -477,6 +492,15 @@ async fn run(cli: Cli, config: &ShabkaConfig, user_id: &str) -> Result<()> {
                 .context("failed to create embedding service")?;
             let history = HistoryLogger::new(config.history.enabled);
             cmd_demo(&storage, &embedder, user_id, &history, clean).await
+        }
+        Cli::Review {
+            list,
+            approve,
+            reject,
+            approve_all,
+        } => {
+            let storage = make_storage(config)?;
+            cmd_review(&storage, list, approve, reject, approve_all).await
         }
     }
 }
@@ -3044,6 +3068,149 @@ async fn cmd_check(storage: &Storage, repair: bool) -> Result<()> {
     println!("\n  Result: {}", if pass { "PASS" } else { "ISSUES FOUND" });
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// review
+// ---------------------------------------------------------------------------
+
+async fn cmd_review(
+    storage: &Storage,
+    _list: bool,
+    approve: Option<String>,
+    reject: Option<String>,
+    approve_all: bool,
+) -> Result<()> {
+    let pending_query = TimelineQuery {
+        status: Some(MemoryStatus::Pending),
+        limit: 10000,
+        ..Default::default()
+    };
+
+    if let Some(id_str) = approve {
+        let id = resolve_pending_id(storage, &id_str).await?;
+        storage
+            .update_memory(
+                id,
+                &UpdateMemoryInput {
+                    status: Some(MemoryStatus::Active),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("failed to approve memory")?;
+        println!("{} Approved memory {}", "✓".green(), &id.to_string()[..8]);
+        return Ok(());
+    }
+
+    if let Some(id_str) = reject {
+        let id = resolve_pending_id(storage, &id_str).await?;
+        storage
+            .update_memory(
+                id,
+                &UpdateMemoryInput {
+                    status: Some(MemoryStatus::Archived),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("failed to reject memory")?;
+        println!(
+            "{} Rejected (archived) memory {}",
+            "✗".red(),
+            &id.to_string()[..8]
+        );
+        return Ok(());
+    }
+
+    let entries = storage
+        .timeline(&pending_query)
+        .await
+        .context("failed to fetch pending memories")?;
+
+    if entries.is_empty() {
+        println!("No pending memories to review.");
+        return Ok(());
+    }
+
+    if approve_all {
+        let mut approved = 0usize;
+        for entry in &entries {
+            if storage
+                .update_memory(
+                    entry.id,
+                    &UpdateMemoryInput {
+                        status: Some(MemoryStatus::Active),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .is_ok()
+            {
+                approved += 1;
+            }
+        }
+        println!("{} Approved {} pending memories.", "✓".green(), approved);
+        return Ok(());
+    }
+
+    // Default or --list: show pending memories
+    println!(
+        "{} pending memories:\n",
+        entries.len().to_string().yellow().bold()
+    );
+    println!(
+        "{:<12} {:<12} {:<6} {}",
+        "ID".dimmed(),
+        "Kind".dimmed(),
+        "Imp".dimmed(),
+        "Title".dimmed()
+    );
+    for entry in &entries {
+        let short_id = &entry.id.to_string()[..8];
+        println!(
+            "{:<12} {:<12} {:<6.2} {}",
+            short_id.cyan(),
+            entry.kind.to_string().magenta(),
+            entry.importance,
+            entry.title
+        );
+    }
+    println!(
+        "\nUse {} or {} to act on individual memories.",
+        "--approve <id>".green(),
+        "--reject <id>".red()
+    );
+
+    Ok(())
+}
+
+/// Resolve a memory ID (full or short prefix) from pending memories.
+async fn resolve_pending_id(storage: &Storage, id: &str) -> Result<Uuid> {
+    if id.len() >= 32 {
+        return Uuid::parse_str(id).context("invalid memory ID");
+    }
+    let entries = storage
+        .timeline(&TimelineQuery {
+            status: Some(MemoryStatus::Pending),
+            limit: 10000,
+            ..Default::default()
+        })
+        .await
+        .context("failed to fetch pending memories")?;
+
+    let matches: Vec<_> = entries
+        .iter()
+        .filter(|e| e.id.to_string().starts_with(id))
+        .collect();
+
+    match matches.len() {
+        0 => anyhow::bail!("no pending memory found matching prefix '{id}'"),
+        1 => Ok(matches[0].id),
+        n => anyhow::bail!(
+            "ambiguous prefix '{id}' matches {n} pending memories. Use a longer prefix."
+        ),
+    }
 }
 
 // ===========================================================================

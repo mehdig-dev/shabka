@@ -934,13 +934,15 @@ impl StorageBackend for SqliteStorage {
             // Serialize query vector to little-endian bytes for sqlite-vec
             let query_blob: Vec<u8> = query_vec.iter().flat_map(|f| f.to_le_bytes()).collect();
 
-            // KNN search via vec_memories, JOIN with memories for full records
+            // KNN search via vec_memories, JOIN with memories for full records.
+            // Exclude Pending memories — they require explicit approval first.
             let sql = "
                 SELECT m.*, v.distance
                 FROM vec_memories AS v
                 JOIN memories AS m ON m.id = v.memory_id
                 WHERE v.embedding MATCH ?1
                   AND v.k = ?2
+                  AND m.status != 'pending'
                 ORDER BY v.distance
             ";
 
@@ -1016,6 +1018,9 @@ impl StorageBackend for SqliteStorage {
                 conditions.push(format!("m.status = ?{idx}"));
                 params.push(Box::new(status_to_str(status)));
                 idx += 1;
+            } else {
+                // Exclude Pending memories by default
+                conditions.push("m.status != 'pending'".to_string());
             }
             if let Some(ref privacy) = query.privacy {
                 conditions.push(format!("m.privacy = ?{idx}"));
@@ -1329,6 +1334,9 @@ impl SqliteStorage {
                 conditions.push(format!("m.status = ?{idx}"));
                 params.push(Box::new(status_to_str(status)));
                 idx += 1;
+            } else {
+                // Exclude Pending memories by default
+                conditions.push("m.status != 'pending'".to_string());
             }
             if let Some(ref privacy) = query.privacy {
                 conditions.push(format!("m.privacy = ?{idx}"));
@@ -1338,7 +1346,7 @@ impl SqliteStorage {
             if let Some(ref created_by) = query.created_by {
                 conditions.push(format!("m.created_by = ?{idx}"));
                 params.push(Box::new(created_by.clone()));
-                // idx += 1; // last field, no need to increment
+                let _ = idx; // suppress unused warning
             }
 
             let where_clause = if conditions.is_empty() {
@@ -2230,5 +2238,79 @@ mod tests {
         // Verify relation is gone
         let report_after = storage.integrity_check().unwrap();
         assert!(report_after.broken_relations.is_empty());
+    }
+
+    // ── Pending status filtering tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_pending_excluded_from_timeline() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let mut active = test_memory();
+        active.title = "Active memory".to_string();
+
+        let mut pending = test_memory();
+        pending.status = MemoryStatus::Pending;
+        pending.title = "Pending memory".to_string();
+
+        storage.save_memory(&active, None).await.unwrap();
+        storage.save_memory(&pending, None).await.unwrap();
+
+        // Default query (no status filter) should exclude Pending
+        let entries = storage
+            .timeline(&TimelineQuery {
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Active memory");
+    }
+
+    #[tokio::test]
+    async fn test_pending_included_when_explicitly_requested() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        let mut pending = test_memory();
+        pending.status = MemoryStatus::Pending;
+        pending.title = "Pending memory".to_string();
+
+        storage.save_memory(&pending, None).await.unwrap();
+
+        // Explicit Pending filter should include it
+        let entries = storage
+            .timeline(&TimelineQuery {
+                status: Some(MemoryStatus::Pending),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Pending memory");
+    }
+
+    #[tokio::test]
+    async fn test_pending_excluded_from_search() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        // Create a memory with Pending status and an embedding
+        let mut pending = test_memory();
+        pending.status = MemoryStatus::Pending;
+        pending.title = "Pending searchable memory".to_string();
+
+        let embedding = vec![0.1_f32; 128];
+        storage
+            .save_memory(&pending, Some(&embedding))
+            .await
+            .unwrap();
+
+        // Vector search should not return Pending memories
+        let results = storage.vector_search(&embedding, 10).await.unwrap();
+        assert!(
+            results.is_empty(),
+            "Pending memories should not appear in vector search"
+        );
     }
 }

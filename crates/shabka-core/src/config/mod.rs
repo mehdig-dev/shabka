@@ -148,6 +148,10 @@ pub struct CaptureConfig {
     pub session_compression: bool,
     #[serde(default)]
     pub auto_tag: bool,
+    /// When true, auto-captured memories are saved with Pending status
+    /// and must be approved via `shabka review` before appearing in search.
+    #[serde(default)]
+    pub review_mode: bool,
 }
 
 impl Default for CaptureConfig {
@@ -157,6 +161,7 @@ impl Default for CaptureConfig {
             min_importance: default_min_importance(),
             session_compression: true,
             auto_tag: false,
+            review_mode: false,
         }
     }
 }
@@ -789,6 +794,77 @@ impl UpdateCheckState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Consolidate state — tracks when auto-consolidation last ran
+// ---------------------------------------------------------------------------
+
+/// Persisted state for scheduled auto-consolidation.
+/// Follows the same pattern as `UpdateCheckState`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ConsolidateState {
+    /// RFC3339 timestamp of the last successful consolidation run.
+    #[serde(default)]
+    pub last_run: String,
+    /// Number of memories consolidated in the last run.
+    #[serde(default)]
+    pub memories_consolidated: usize,
+}
+
+impl ConsolidateState {
+    /// Path to the state file: `~/.config/shabka/consolidate_state.toml`
+    pub fn path() -> Option<PathBuf> {
+        dirs::config_dir().map(|p| p.join("shabka").join("consolidate_state.toml"))
+    }
+
+    /// Load from disk. Returns `Default` if the file is missing or unparseable.
+    pub fn load() -> Self {
+        let Some(path) = Self::path() else {
+            return Self::default();
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Save to disk, creating the parent directory if needed.
+    pub fn save(&self) -> Result<()> {
+        let path = Self::path()
+            .ok_or_else(|| ShabkaError::Config("cannot determine config directory".to_string()))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ShabkaError::Config(format!("failed to create config dir: {e}")))?;
+        }
+        let toml_str = toml::to_string_pretty(self).map_err(|e| {
+            ShabkaError::Config(format!("failed to serialize consolidate state: {e}"))
+        })?;
+        std::fs::write(&path, toml_str)
+            .map_err(|e| ShabkaError::Config(format!("failed to write consolidate state: {e}")))?;
+        Ok(())
+    }
+
+    /// Returns `true` if consolidation is due based on the given interval.
+    ///
+    /// Supported intervals: `"daily"` (24h), `"weekly"` (7d), `"on_startup"` (always due).
+    pub fn is_due(&self, interval: &str) -> bool {
+        if interval == "on_startup" {
+            return true;
+        }
+        if self.last_run.is_empty() {
+            return true;
+        }
+        let Ok(last) = chrono::DateTime::parse_from_rfc3339(&self.last_run) else {
+            return true;
+        };
+        let age = chrono::Utc::now().signed_duration_since(last);
+        match interval {
+            "daily" => age.num_hours() >= 24,
+            "weekly" => age.num_days() >= 7,
+            _ => age.num_hours() >= 24, // default to daily for unknown intervals
+        }
+    }
+}
+
 /// Check whether the current embedding config's dimensions are compatible
 /// with the previously stored state. Returns `Err(message)` on mismatch,
 /// `Ok(())` if compatible or if no prior state exists (first run).
@@ -1273,6 +1349,22 @@ session_compression = false
         assert!(!config.capture.session_compression);
     }
 
+    #[test]
+    fn test_review_mode_config_default_false() {
+        let config = CaptureConfig::default();
+        assert!(!config.review_mode);
+    }
+
+    #[test]
+    fn test_review_mode_config_toml() {
+        let toml_str = r#"
+[capture]
+review_mode = true
+"#;
+        let config: ShabkaConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.capture.review_mode);
+    }
+
     // -- check_dimensions tests --
 
     #[test]
@@ -1427,5 +1519,74 @@ provider = "hash"
             ..Default::default()
         };
         assert!(!state.is_stale());
+    }
+
+    // -- ConsolidateState tests --
+
+    #[test]
+    fn test_consolidate_state_roundtrip() {
+        let state = ConsolidateState {
+            last_run: "2025-06-01T12:00:00Z".to_string(),
+            memories_consolidated: 5,
+        };
+        let toml_str = toml::to_string_pretty(&state).unwrap();
+        let loaded: ConsolidateState = toml::from_str(&toml_str).unwrap();
+        assert_eq!(loaded, state);
+    }
+
+    #[test]
+    fn test_consolidate_state_is_due_empty() {
+        let state = ConsolidateState::default();
+        assert!(state.is_due("daily"));
+        assert!(state.is_due("weekly"));
+        assert!(state.is_due("on_startup"));
+    }
+
+    #[test]
+    fn test_consolidate_state_is_due_daily() {
+        // 25 hours ago — should be due for daily
+        let old = chrono::Utc::now() - chrono::Duration::hours(25);
+        let state = ConsolidateState {
+            last_run: old.to_rfc3339(),
+            memories_consolidated: 0,
+        };
+        assert!(state.is_due("daily"));
+
+        // 1 hour ago — should NOT be due for daily
+        let recent = chrono::Utc::now() - chrono::Duration::hours(1);
+        let state = ConsolidateState {
+            last_run: recent.to_rfc3339(),
+            memories_consolidated: 0,
+        };
+        assert!(!state.is_due("daily"));
+    }
+
+    #[test]
+    fn test_consolidate_state_is_due_weekly() {
+        // 8 days ago — should be due for weekly
+        let old = chrono::Utc::now() - chrono::Duration::days(8);
+        let state = ConsolidateState {
+            last_run: old.to_rfc3339(),
+            memories_consolidated: 0,
+        };
+        assert!(state.is_due("weekly"));
+
+        // 3 days ago — should NOT be due for weekly
+        let recent = chrono::Utc::now() - chrono::Duration::days(3);
+        let state = ConsolidateState {
+            last_run: recent.to_rfc3339(),
+            memories_consolidated: 0,
+        };
+        assert!(!state.is_due("weekly"));
+    }
+
+    #[test]
+    fn test_consolidate_state_on_startup_always_due() {
+        let recent = chrono::Utc::now() - chrono::Duration::minutes(1);
+        let state = ConsolidateState {
+            last_run: recent.to_rfc3339(),
+            memories_consolidated: 0,
+        };
+        assert!(state.is_due("on_startup"));
     }
 }

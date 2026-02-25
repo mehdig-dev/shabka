@@ -278,6 +278,10 @@ async fn save_compressed_memories(
         .with_privacy(privacy)
         .with_project(derive_project_id(&event.cwd));
 
+        if config.capture.review_mode {
+            memory.status = shabka_core::model::MemoryStatus::Pending;
+        }
+
         // Auto-tag with LLM if enabled
         if let Some(ref llm) = auto_tag_llm {
             if let Some(result) = shabka_core::auto_tag::auto_tag(&memory, llm).await {
@@ -458,6 +462,10 @@ fn save_memory_immediate(
         .with_importance(importance)
         .with_privacy(privacy)
         .with_project(derive_project_id(&event.cwd));
+
+    if config.capture.review_mode {
+        memory.status = shabka_core::model::MemoryStatus::Pending;
+    }
 
     log_quality_warnings(&memory);
 
